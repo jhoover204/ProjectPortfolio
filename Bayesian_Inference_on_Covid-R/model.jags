@@ -1,0 +1,32 @@
+##Jonathan Hoover (S2113204)
+##Practical 5: Bayesian inference on Covid-19 incidence in England
+
+##This is the implemented JAGS model called in the Practical 5 Rscript
+
+model {
+  ##x[i]: log number of daily infections modelled via a Second order Random Walk
+  ##n[i]: Total number of daily infections
+  ##B[i, 1:i]: Probability of dying after 0:i-1 days; n[1:i] # infections per day
+  ##m[i]: B[i,]n = Expected mean deaths per day
+  ##y[i]: count of daily deaths modelled via a poisson distribution
+  ##tau: precision of log daily infection model; initial value supplied in model call: tau = 0.01
+
+  for (i in 1:N){
+    n[i] <- exp(x[i]) ##Daily infection count
+    m[i] <- B[i, 1:i] %*% n[1:i] ##Expected (mean) deaths per day
+    y[i] ~ dpois(m[i]) ##distribution for count of daily deaths ~ Pois(mean = m[i])
+  }
+  
+  ##priors
+  tau ~ dgamma(4, 0.04) ##tau prior; tau has initial value t[1] set in the model call
+  
+  ##Initial values for X
+  x[1] ~ dnorm(0, tau[1]) ##tau[1] is initial tau value provided in model call
+  x[2] ~ dnorm(x[1], tau) ##tau[2] generated from the tau prior above
+  
+  ##Remaining values of x
+  for (i in 3:N){
+    x[i] ~ dnorm((2 * x[i-1] - x[i-2]), tau) ##log daily infection
+  }
+
+}
