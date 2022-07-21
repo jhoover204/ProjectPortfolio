@@ -3,7 +3,7 @@ Dissertation 1: Identifying Risk Factors for Dementia (Cognitive Impairment) usi
 
 Author: Jonathan Hoover
 
-This .zip file contains three folders/files with:
+This folder contains three folders/files with:
 
 A) The code used for 1) exploratory data analysis and data generation, and 2) a Bayesian Network Analysis.
 B) Data and images used to generate my report
