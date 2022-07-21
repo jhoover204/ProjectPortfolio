@@ -1,0 +1,1986 @@
+---
+title: "Dementia Risk Factors"
+output: html_document
+---
+
+
+```{r}
+rm(list = ls())
+gc()
+##read in cross sectional data
+train <- read.csv("./cross_sec1_data.csv", stringsAsFactors = T)
+
+##All are factors so convert to factors
+train <- data.frame(lapply(train, as.factor))
+str(train)
+```
+
+```{r, message = F}
+##Load Packages
+packages <- c("caret", "ggplot2", "tidyverse", "gridExtra", "ggpubr", "data.table",
+              "dplyr", "mice", "VIM", "JointAI", "corrplot", "kableExtra",
+              "bnlearn","gRain", "rlist", "parallel", "foreach", "doParallel")
+sapply(packages, function(X){if(!(X %in% installed.packages())) install.packages(X)})
+sapply(packages, require, character.only = TRUE)
+```
+
+# Bayesian Network Analysis
+
+
+```{r}
+##rename variables for easy of understanding
+vars <- c("cogscore", "country", "female", "age", 
+          "education", "sphus", "bmi", "phys_activity",
+          "smoking", "ever_smoked", "drinking", "casp", "depression",
+          "hhsize","marital_stat", "norm_income")
+colnames(train) <- vars
+
+##for cogscore, rename factors as 1= Severe, 2 = Mild, 3 = Unimpaired
+train$cogscore <- factor(train$cogscore, 
+                         labels = c("Severe", "Mild", "Unimpaired"))
+
+
+##split data into internal (train) and external (validation) set 
+##based on countries
+##set seed for reproducibility
+seed <- 42
+set.seed(seed)
+
+##get country lists and randomly sample the list for internal validation
+countries <- unique(train$country)
+country_nintern<- ceiling(0.65*length(countries))
+country_intern <- sample(countries, size = country_nintern)
+
+##subset data for internal validation and external validation
+external_df <- train[!(train$country %in% country_intern),] ##external validation set
+external_df$country <- as.factor(as.character(external_df$country)) ##levels only those in df
+train <- train[train$country %in% country_intern, ]##internal validation set
+train$country <- as.factor(as.character(train$country)) ##levels only those in df
+
+```
+
+```{r}
+##Removing country from all because it is just used to create the 
+##train/test split
+train <- train %>% dplyr::select(-country)
+external_df <- external_df %>% dplyr::select(-country)
+```
+
+
+```{r}
+##Creating Datasets that wil be needed
+set.seed(seed) ##set seed for reproducibility
+
+##create Model of interest AND internal train/validation split
+##(This is separate from the the external validation, which tests country generalizability
+
+##Model of interest
+train_6 <- train 
+
+##External validation model of interst
+external_df6 <- external_df 
+
+##train/validation split (80/20)
+train_ind <- createDataPartition(train_6$cogscore, list=FALSE,
+                                 p=0.8) ##train index
+train_6 <- train_6[train_ind,] ##training set
+validation_6 <- train_6[-train_ind,] ##validation set
+
+
+##Also create upsampling dataset since the data is unbalanced to improve 
+##structure learning and prediction
+train_6_oversample <- train_6 %>% group_by(cogscore) %>% sample_n(max(table(train_6$cogscore)), replace = T) %>% as.data.frame()
+```
+
+
+```{r}
+##function to change font of graphs
+graphvis.font <- function(bnlearn.object, font){
+  g <-Rgraphviz::layoutGraph(bnlearn::as.graphNEL(bnlearn.object))
+  graph::nodeRenderInfo(g) <- list(fontsize=font)
+  Rgraphviz::renderGraph(g)
+}
+```
+
+
+
+```{r}
+##create full model blacklist without allowing exit from cogscore
+blacklist = myblacklist = matrix(c("cogscore","age",
+                   "female","age",
+                   "education","age",
+                   "sphus", "age",
+                   "chronic_dis", "age", ##not included now (removed below)
+                   "dr_visit", "age",##not included now (removed below)
+                   "hosp_stay", "age",##not included now (removed below)
+                   "bmi", "age",
+                   "phys_activity", "age",
+                   "smoking", "age", 
+                   "ever_smoked", "age",
+                   "drinking", "age",
+                   "casp", "age",
+                   "depression", "age",
+                   "hhsize", "age",
+                   "marital_stat", "age",
+                   "norm_income", "age",
+                   "maxgrip", "age",##not included now (removed below)
+                   "lgmuscle_score", "age",##not included now (removed below)
+                   "grossmotor", "age",##not included now (removed below)
+                   "network_score_imp", "age",##not included now (removed below)
+                   "cogscore","female",
+                   "age","female",
+                   "education","female",
+                   "sphus", "female",
+                   "chronic_dis", "female",##not included now (removed below)
+                   "dr_visit", "female",##not included now (removed below)
+                   "hosp_stay", "female",##not included now (removed below)
+                   "bmi", "female",
+                   "phys_activity", "female",
+                   "smoking", "female", 
+                   "ever_smoked", "female",
+                   "drinking", "female",
+                   "casp", "female",
+                   "depression", "female",
+                   "hhsize", "female",
+                   "marital_stat", "female",
+                   "norm_income", "female",
+                   "maxgrip", "female",##not included now (removed below)
+                   "lgmuscle_score", "female",##not included now (removed below)
+                   "grossmotor", "female",##not included now (removed below)
+                   "network_score_imp", "female",##not included now (removed below)
+                   "cogscore", "education",
+                   "cogscore","sphus", 
+                   "cogscore","chronic_dis", ##not included now (removed below)
+                   "cogscore","dr_visit", ##not included now (removed below)
+                   "cogscore","hosp_stay", ##not included now (removed below)
+                   "cogscore","bmi",
+                   "cogscore","phys_activity",
+                   "cogscore","smoking",  
+                   "cogscore","ever_smoked",
+                   "cogscore","drinking", 
+                   "cogscore","casp", 
+                   "cogscore","depression", 
+                   "cogscore","hhsize",
+                   "cogscore","marital_stat",
+                   "cogscore","norm_income",
+                   "cogscore","maxgrip",##not included now (removed below)
+                   "cogscore","lgmuscle_score",##not included now (removed below)
+                   "cogscore","grossmotor",##not included now (removed below)
+                   "cogscore","network_score_imp"),##not included now (removed below)
+                 byrow = TRUE, ncol=2, dimnames =list(NULL,c("from","to")))
+
+
+##create blacklists for model of interest
+
+blacklist6_ind <- apply(blacklist, MARGIN = 2, 
+                          function(x){!(x %in% c("chronic_dis", "dr_visit", 
+                                                 "hosp_stay", "maxgrip", "lgmuscle_score",
+                                                 "grossmotor", "network_score_imp"))})
+blacklist6_ind <- as.logical(apply(blacklist6_ind, 1, prod))
+blacklist6 <- blacklist[blacklist6_ind,]
+
+
+
+```
+
+
+## Structure Learning
+
+```{r, warning = F}
+##Generating the averaged DAG from a bootstrap on non-oversampled data
+##The following is commented out to for computational efficiency. 
+##The output was saved to .rdata file
+
+# set.seed(seed)
+# nsample <- 400
+# 
+# #create cluster object for parallel processing
+# ncores <- ceiling(detectCores() * 0.65) ##use 65% of available cores (rounded up)
+# cl = makeCluster(ncores)
+# 
+# ##set random cluster seed for reproducibility
+# clusterSetRNGStream(cl, seed)
+# 
+# boot6 <- boot.strength(train_6, R = nsample, algorithm = "hc", cluster = cl,
+#                       algorithm.args = list(score = "bic",
+#                                             blacklist = blacklist6))
+# 
+# stopCluster(cl)
+# saveRDS(boot6, "original_data_bootstrap_arc.rdata")
+```
+
+
+```{r}
+boot6 <- readRDS("original_data_bootstrap_arc.rdata")
+
+##plot thresholds to find the correct one
+plot(boot6)
+
+##chose 0.85 threshold and average the network
+avg.boot6 <- averaged.network(boot6, threshold = 0.85)
+graphvis.font(avg.boot6, font = 20)
+
+```
+
+```{r}
+##The following functions are used to:
+##1) Perform conditional independence testing on a dataset for a given variable
+##   to find if other variables are signficantly associated given some conditioning vars
+##   And then test significance of relationship of other variables given we then condition
+##   on previously identified significant variables
+##2) Add significant arcs found from conditional independence tests above to a dag of 
+##   interest, and then from all new dags created, find equivalent dags and unique dags
+
+
+##conditional independence testing
+
+##Function to perform multiple conditional independence tests with df of test strings
+ci.test.df <- function(df, conditioning.var=NULL, test = "mi", data){
+  ##Input:
+  ##df: dataframe with col1 as the variable the variable of interest
+  ##    col2 as the variable to to association with variable 1
+  ##    and each row representing an individual independence test
+  ##conditioning.var: variables to condition on for conditional independence test
+  ##test: test type; default is mutual information
+  ##data: dataframe with original data for (conditional) independence testing
+  
+  ##output: dataframe of (conditional) independence test outputs
+  
+  ##testing if df is empty 
+  ##(find.significant.arcs does an interative test and the last test yields empty df)
+  ##if empty, just return empty output df with a warning
+
+    
+  ##Check if a conditioning variable is provided
+  
+  if (is.null(conditioning.var)) {
+    ##apply ci.test to each specified test in df
+    res <- apply(df, MARGIN = 1, function(X) {
+      ci.test(X[1], X[2], test = test, data = data)
+    })
+    
+    ##extract data for dataframe output
+    test.name <- sapply(res, `[[`, "data.name") ##test name
+    statistic <- sapply(res, `[[`, "statistic") ##statistic value
+    pval <- sapply(res, `[[`, "p.value") ##pvalue
+    output.df <-
+      data.frame(cbind(
+        test.name,
+        var1 = df[, 1],
+        var2 = df[, 2],
+        statistic,
+        pval
+      ))
+    
+    ##name statistic column by the statistic (mi, etc)
+    stat.name <- unique(names(statistic))
+    colnames(output.df)[which(colnames(output.df) == "statistic")] <-
+      stat.name
+    
+    ##remove row names
+    row.names(output.df) <- NULL
+    
+    ##If conditioning variables provided, condition on them
+  } else{
+    ##apply ci.test to each specified test in df
+    res <- apply(df, MARGIN = 1, function(X) {
+      ci.test(X[1], X[2], conditioning.var, test = test, data = data)
+    })
+    
+    ##extract data for dataframe output
+    test.name <- sapply(res, `[[`, "data.name") ##test name
+    statistic <- sapply(res, `[[`, "statistic") ##statistic value
+    pval <- sapply(res, `[[`, "p.value") ##pvalue
+    output.df <-
+      data.frame(cbind(
+        test.name,
+        var1 = df[, 1],
+        var2 = df[, 2],
+        statistic,
+        pval
+      ))
+    
+    ##name statistic column by the statistic (mi, etc)
+    stat.name <- unique(names(statistic))
+    colnames(output.df)[which(colnames(output.df) == "statistic")] <-
+      stat.name
+    
+    ##remove row names
+    row.names(output.df) <- NULL
+    
+  }
+  
+  ##convert statistic and pva from character to numeric
+  output.df[, c(stat.name, "pval")] <-
+    apply(output.df[, c(stat.name, "pval")], 2, as.numeric)
+  
+  return(output.df)
+    
+  
+  
+}
+
+
+##function to find significant arcs in data pointing to a variable of interest given
+##some known parents (ie finds potential additional arcs outside those already found)
+find.significant.arcs <- function(data, variable, parents, sig.threshold = 0.001){
+  ##Input:
+  ##data: Dataframe to do the conditional independence tests
+  ##variable: Outcome variable of interest for conditional independence testing
+  ##parents: Known Parents of node to condition on in cond independence test
+  ##sig.threshold: Significance threshold for selecting significant associations
+  ##               Default is 0.001
+  
+  ##Output:
+  ##sig.arcs: Dataframe of significant arcs to add based on tests
+  
+  ##set up testing dataframe with cogscore ~ all other variables
+  ##base.test.string will contain variable of interest and each variable to test again
+  ##test.string will remove the variables we condition on (parents) from base.test.string
+  ci.pred.vars <- colnames(data)[which(colnames(data) != variable)]
+  base.test.string <- data.frame(cbind(variable, ci.pred.vars)) ##initial testing vars
+  test.string <- base.test.string %>% dplyr::filter(!(ci.pred.vars %in% parents)) #removes parents
+  
+  ##For conditional independence testing, We will:
+  ##1) initially condition on the known parents of the node of interest to test significance
+  ##2) Find variables with significant association with variable of interest
+  ##3) If there are significant variables, randomly select one (if only one choose that)
+  ##4) Add this selected variable to set of parents
+  ##5) Condition on updated set of parents and run conditional test again
+  ##6) Repeat 2-5 until no significant variables are remaining
+  
+  ci.test.res <- ci.test.df(test.string, conditioning.var = parents,
+                            test = "mi", data = data)##ci.test results given parents
+  sig.arcs.ind <- which(ci.test.res$pval < sig.threshold) ##index of signif arcs in test res
+  ci.test.res <- ci.test.res[sig.arcs.ind,]##subset only significant results
+  
+  chosen.vars <- c() ##initialize list of chosen significant variables to find in loop
+  
+  ##create while loop to find significant variables associated with "variable"
+  ##test if there are any significant results, if none, don't continue the loop
+  while(nrow(ci.test.res > 0)){
+      n.sig.arcs <- length(sig.arcs.ind) ##number of significant arcs
+      
+      ##If there are multiple significant variables, randomly select one
+      if(n.sig.arcs > 1){
+        chosen.arc <- ci.test.res[sample(1:n.sig.arcs, size = 1),] ##randomly select an arc
+      }else{ ##if only one significant arc, choose this one
+        chosen.arc <- ci.test.res
+      }
+      
+      ##identify most significant variable associated with "variable" ie var of interest
+      ##save to list of chosen variables,
+      ##add to set of parents for conditioning in future conditional tests,
+      ##And remove parents from the base.test.string for future conditional test
+      chosen.vars <- c(chosen.vars, chosen.arc$var2)
+      parents <- c(parents, chosen.arc$var2)
+      test.string <- base.test.string %>% dplyr::filter(!(ci.pred.vars %in% parents))
+      
+      
+      ##Conduct next conditional independence test with updated test.string and parents
+      #(if there are any remaining that have not been tested)
+      
+      ci.test.res <- ci.test.df(test.string, conditioning.var = parents,
+                                test = "mi", data = data)##ci.test results given parents
+      sig.arcs.ind <- which(ci.test.res$pval < sig.threshold) ##index of sig arcs in results
+      ci.test.res <- ci.test.res[sig.arcs.ind,]##subset only significant results
+  }
+  
+  ##When loop is finished, we have a list of all variables that were found significant
+  ##After having conditioned on the parents (updated in each loop) of the var of interest
+  ##Create dataframe with arcs from "variable" of interest to chosen.vars
+  
+  sig.arcs <- data.frame(from = variable, to = chosen.vars)
+
+  return(sig.arcs)
+}
+
+##Function to create new dags with arcs added
+##based on conditional independence tests from before
+add.arcs.fun <- function(base.dag, arc.set, to) {
+  ##Input:
+  ##base.dag: base dag to update with new arcs (sequentially)
+  ##arc.set: list of start points for arcs (updated sequentially)
+  ##to: end point for arc
+  
+  ##Output:
+  ##base.dag: dag updated with new arcs (sequentially)
+  
+  
+  ##update the base dag with the chosen arc set (in order of first to last)
+  ##The ordered component is necessary because it is based on sequential
+  ##conditional tests where each subsequent test conditions on the previous variable
+  
+  ##if there are cyclic graphs, there will be an error
+  ##Therefore using try-catch; if there is an error, return null dag with name
+  for (i in 1:length(arc.set)) {
+    base.dag <- tryCatch({
+      ## Try this to see if there is an error
+      ## Adds arcs from "from" to the element in arcset
+      set.arc(base.dag, from = arc.set[i], to = to)
+      
+    },
+    error = function(err) {
+      print(err)
+      print(paste("Arc Set:", paste(arc.set, collapse = ",")))
+      print("Skipping this arc set.")
+      # Return NULL if there is an error
+      return(NULL)
+    },
+    ##If there are warnings, return the warnings
+    warning = function(warn) {
+      print(paste("set.arc caused a warning:"))
+      print(warn)
+      # return nothing if there is a warning
+      return(NULL)
+    })
+  }
+  
+  ##after updating the base dag with arcs, return it
+  return(base.dag)
+}
+
+
+
+##Function to compare equivalence of set of dags
+##And find groups of equivalent dags given a set of dags
+find.equivalent.dags <- function(dag.list) {
+  ##Input:
+  ##dag.list: List of dags that we wish to compare
+  ##          (DAGS MUST BE UNIQUELY NAMED)
+  
+  ##Output:
+  ##equivalence.groups: List for names of each equivalent dag in the list
+  
+  ##keep only ONE name of each equivalent class
+  
+  ##Compare all dags in dag.list to each other (preventing repeats)
+  ##If the dags are equivalent (0 false positive and 0 false negatives)
+  ##add the names of the dags to the a list called compare.names
+  
+  compare.names <- list() ##initialize list
+  
+  ##Nested loop to compare each element in dag.list to subsequent elements
+  ##First (i) goes from 1:(n-1) and second (j) goes from (i+1):n
+  ##This structure of the loop prevents repeats
+  
+  n <- length(dag.list) ##length of dag.list
+  for (i in 1:(n - 1)) {
+    
+    for (j in (i + 1):n) {
+      ##compare i to j element in dag list
+      res <- compare(dag.list[[i]], dag.list[[j]])
+      
+      ##if total false positives and false negatives are zero
+      ##they are equivalent, so add the name of comparison
+      if (res$fp + res$fn == 0) {
+        compare.names <- list.append(compare.names,
+                                     c(names(dag.list[i]),
+                                       names(dag.list[j])))
+        
+      ##otherwise (else) break out of the loop (next)
+      } else{
+        next
+      }
+      
+    }
+    
+  }
+  
+  ##Now we find groups of equivalent dags
+  
+  ##First we define a function to check if (and where) a dag shows up in the 
+  ##equivalence comparisons,
+  ##if it does not, the dag is in its own equivalent class
+  ##if it does, we will find the unique set of dags equivalent to the tested dag
+  
+  ##Define nested function for a single dag equivalence class check
+  find.equivalence.class <- function(compare.names, dag.name) {
+    ##Input:
+    ##compare.names: dag comparison list from above (must not be empty)
+    ##dag.name: name of dag being checked for equivalence
+    
+    ##Output:
+    ##equiv.class: list of equivalent dags to dag.name
+    
+    ##check if the dag shows up in the list of equivalent dags (compare.names)
+    equiv.test <- sapply(compare.names, function(X) {dag.name %in% X})
+    
+    ##if the dag is not present in the equivalence tests (sum of equiv.test is 0)
+    ##This dag is not equivalent with any others, so it is in it's own equivalence class
+    ##Otherwise(else) find the unique set of dags that are considered equivalent
+    if (sum(equiv.test) == 0) {
+      equiv.class <- dag.name ##dag as it's own equivalence class
+      
+      ##if it is present, find the names of other dags that are equivalent to it
+    } else{
+      dag.comparison <-compare.names[equiv.test] ##comparisons that contain dag.name
+      equiv.class <- unique(unlist(dag.comparison)) ##find unique set of dag names in group
+    }
+    
+    return(equiv.class)
+    
+  }
+  
+  equivalence.groups <- list() ##initialize list for equivalent groups
+
+  ##loop to test all dags for equivalence using find.equivalence.class defined above
+  for (i in 1:n) {
+    
+    ##first check if there are any dags in compare.names
+    ##If not, there are NO equivalence classes and all dags are in their own
+    ##In this case, add each to their own equivalence group and then break the loop
+    
+    if(length(compare.names) == 0){
+      ##put each dag in it's own equivalence group
+      equivalence.groups <- sapply(names(dag.list), list, USE.NAMES = F)
+      break
+    }
+    
+    ##If there are dags in compare.names continue with finding equivalence classes
+    
+    dag.name <- drop(names(dag.list)[i]) ##current dag name
+    
+    ##For each dag, check if:
+    ##1) Any equivalence classes have been found (if not check next dag for equiv classes)
+    ##2) Any dag shows up in the already identified equivalence groups
+    ##   If it does, skip this dag comparison (to prevent repeat tests),
+    ##   if it doesn't, check for equivalence classes
+    
+    ##Note: (Need both tests because the second test does not work if no groups found yet)
+    equivalence.notfound <- length(equivalence.groups) == 0 ##test 1
+    dag.in.equivalence <- sapply(equivalence.groups, 
+                                 function(X){dag.name %in% X}) ##calculation for test 2
+    
+    if (equivalence.notfound) { ##find equivalence if none have been found yet
+      
+      ##find equivalence class for this dag
+      equiv.class <- find.equivalence.class(compare.names, dag.name)
+      
+      ##add the groups of equivalent classes to the equivalence group list
+      equivalence.groups <- list.append(equivalence.groups, equiv.class)
+      
+    } else if(sum(dag.in.equivalence) > 0){ ##skip if dag already in an equiv class
+      next
+      
+    } else{ ##find dag equivalence class if not yet in one
+
+      equiv.class <- find.equivalence.class(compare.names, dag.name)
+      
+      ##add the groups of equivalent classes to the equivalence group list
+      equivalence.groups <- list.append(equivalence.groups, equiv.class)
+    }
+    
+  }
+  
+  # ##We tested each dag name for equivalence groups, so there will be repeats now
+  # ##to find the unique equivalence groups, we just find the unique set of
+  # ##equivalence groups (need to sort to ensure they are the same)
+  # equivalence.groups <- unique(sapply(equivalence.groups, sort))
+  
+  return(equivalence.groups)
+  
+}
+
+##Function to identify the unique dags in a group of potentially equivalent dags
+find.unique.dags <- function(dag.list){
+  ##Input:
+  ##dag.list: List of dags that we wish to compare
+  ##          (DAGS MUST BE UNIQUELY NAMED)
+  
+  ##Output:
+  ##unique.dags: List of unique dags in a list of dags
+  
+  ##find the equivalent groups from all dags (named)
+  equivalence.groups <- find.equivalent.dags(dag.list)
+  n.equiv.groups <- length(equivalence.groups) ##count of equivalence groups
+  
+  ##select a unique dag from each group 
+  ##(since they are equivalent can just select the first)
+  ##Return one of the dags from each group since they are the same
+  
+  name.unique.dags <- lapply(equivalence.groups, `[`, 1) ##selects the first
+  unique.dags <- lapply(name.unique.dags, 
+                        function(X){dag.list[[X]]}) ##extract unique dags
+  names(unique.dags) <- paste("dag", 1:n.equiv.groups, sep = "_") ##name dags
+  
+  return(unique.dags)
+  
+  
+}
+
+```
+
+## 
+```{r}
+##This is part two for the structure learning on oversampled data: 
+##Conditional independence testing
+##We use a stochastic method to find possible arcs since
+##There are a potentially high number of combinations to test deterministically
+##Additionally it will change for each DAG, so this is more easily generalizable
+
+##We comment this out because it is computationally intensive.
+##The results are saved to .rdata file for easy loading
+
+##bootstrapping to find as many possible combinations of singificant arcs
+##in our original data as possible. We will save this to read in to prevent additional
+##computation cost when re-running the code
+
+#find parents for avg.boot6
+parents_orig <- arcs(avg.boot6)[which(arcs(avg.boot6)[,"to"] == "cogscore")]
+
+# bootsample <- 400 ##number of samples to run to find all possible arcs
+# sig.threshold <- 1e-5 ##significance threshold for an arcs
+# 
+# ##run in parallel to reduce computational load
+# ncores <- ceiling(detectCores() * 0.65) ##use 65% of available cores (rounded up)
+# cl = makeCluster(ncores)
+# 
+# ##set random cluster seed for reproducibility
+# clusterSetRNGStream(cl, seed)
+# ##define cluster environment
+# clusterExport(cl, varlist = c("train_6", "find.significant.arcs",
+#                               "ci.test.df", "packages",
+#                               "sig.threshold", "bootsample",
+#                               "parents_orig"),
+#               envir=.GlobalEnv)
+# clusterEvalQ(cl, {sapply(packages, require, character.only = T)})
+# 
+# ##Find arcs with stochastic algorithm defined above in parallell
+# add.arcs.list_orig <- do.call(rbind, parLapply(cl = cl, X = 1:bootsample,
+#                            function(X){
+#   res <- find.significant.arcs(train_6, variable = "cogscore",
+#                                parents = parents_orig,
+#                                sig.threshold = sig.threshold) ##finds the arcs
+#   df <- data.frame(boot = X, variable = paste(res[,"to"], collapse = ",")) ##pastes them in order
+#   return(df)
+# 
+#   }))
+# stopCluster(cl)
+# 
+# ##identified arcs
+# boot6.cond.arcs <- list(unique(add.arcs.list_orig$variable))
+# list.save(boot6.cond.arcs, "CI_test_variables.rdata")
+```
+
+```{r}
+##Here we find the unique set of DAGs from those arcs tested before
+
+##Load in the arcs identified in the code above
+boot6.cond.arcs <- unlist(list.load("CI_test_variables.rdata"))
+
+##separate the arcs in the order they were found
+arcs.tests_boot_orig <- sapply(boot6.cond.arcs, strsplit, split = ",")
+
+##Add the arcs found in the conditional tests above 
+##to the base dag: avg.boot6 (going into "cogscore")
+dag.tests_orig <- lapply(arcs.tests_boot_orig, function(X){
+  add.arcs.fun(base.dag = avg.boot6, arc.set = X, to = "cogscore")
+})
+dag.tests_orig <- dag.tests_orig[!sapply(dag.tests_orig, is.null)] ##removes any irrelevant arcs
+
+
+##Of all those dags created, find the unique dags
+unique.ci.dags_orig <- find.unique.dags(dag.tests_orig)
+```
+
+
+##oversampled bootstrap
+```{r}
+##Here again we perform a bootstrap to find the base-dag for oversampled data
+##It is commented out since it is computationally intensive. 
+##The data is saved to .rdata file for easy loading
+
+# set.seed(seed)
+# nsample <- 400
+# 
+# #create cluster object for parallel processing
+# ncores <- ceiling(detectCores() * 0.65) ##use 65% of available cores (rounded up)
+# cl = makeCluster(ncores)
+# 
+# ##set random cluster seed for reproducibility
+# clusterSetRNGStream(cl, seed)
+# 
+# 
+# ##Literature Variables boot (train_6)
+# boot8 <- boot.strength(train_6_oversample, R = nsample, algorithm = "hc", cluster = cl,
+#                        algorithm.args = list(score = "bic",
+#                                              blacklist = blacklist6))
+# 
+# stopCluster(cl)
+# saveRDS(boot8, "upsampled_data_bootstrap_arc.rdata")
+
+```
+
+```{r}
+##Read in boot 8 that was saved previously
+boot8 <- readRDS("upsampled_data_bootstrap_arc.rdata")
+
+##plot boot8 thresholds to find the best to use. We choose 0.85
+plot(boot8)
+
+##Find average network
+avg.boot8 <- averaged.network(boot8, threshold = 0.85)
+graphvis.font(avg.boot8, font = 40)
+```
+
+
+## Conditional Independence Tests for Oversampled Data
+```{r}
+##This is part two for the structure learning on oversampled data: 
+##Conditional independence testing
+##We use a stochastic method to find possible arcs since
+##There are a potentially high number of combinations to test deterministically
+##Additionally it will change for each DAG, so this is more easily generalizable
+
+##We comment this out because it is computationally intensive.
+##The results are saved to .rdata file for easy loading
+
+##bootstrapping to find as many possible combinations of singificant arcs
+##in our original data as possible. We will save this to read in to prevent additional
+##computation cost when re-running the code
+
+##parents found in boot8
+parents_upsample <- arcs(avg.boot8)[which(arcs(avg.boot8)[,"to"] == "cogscore")]
+
+# ##bootsample size and threshold for ci testing
+# bootsample <- 400
+# sig.threshold <- 1e-5
+# 
+# ##setup clusters
+# ncores <- ceiling(detectCores() * 0.65) ##use 65% of available cores (rounded up)
+# cl = makeCluster(ncores)
+# 
+# ##set random cluster seed for reproducibility
+# clusterSetRNGStream(cl, seed)
+# 
+# ##cluster environment
+# clusterExport(cl, varlist = c("train_6_oversample", "find.significant.arcs",
+#                               "ci.test.df", "packages", "sig.threshold",
+#                               "parents_upsample"),
+#               envir=.GlobalEnv)
+# clusterEvalQ(cl, {sapply(packages, require, character.only = T)})
+# 
+# ##perform conditional independence tests
+# add.arcs.list_boot <- do.call(rbind, parLapply(cl = cl, X = 1:bootsample,
+#                            function(X){
+#   res <- find.significant.arcs(train_6_oversample, variable = "cogscore",
+#                                parents = parents_upsample,
+#                                sig.threshold = sig.threshold)
+#   df <- data.frame(boot = X, variable = paste(res[,"to"], collapse = ","))
+#   return(df)
+# 
+#   }))
+# stopCluster(cl)
+# 
+# ##save results so we do not have to repeatedly run the test
+# arcs.tests_boot_CI <- list(unique(add.arcs.list_boot$variable))
+# list.save(arcs.tests_boot_CI,
+# file = "Upsampled_CI_test_variables.rdata")
+
+
+
+
+```
+
+### Structure Learning: Conditional Independence Testing
+```{r}
+##Here we check the equivalence classes of all possible DAGS from the conditional 
+##independence testing to isolate unique dags found
+
+##load in the arcs
+arcs.tests_boot_CI<- unlist(list.load("Upsampled_CI_test_variables.rdata"))
+arcs.tests_boot <- sapply(arcs.tests_boot_CI, strsplit, split = ",")
+
+##create arcs with possible combinations found 
+dag.tests <- lapply(arcs.tests_boot, function(X){
+  add.arcs.fun(base.dag = avg.boot8, arc.set = X, to = "cogscore")
+})
+dag.tests <- dag.tests[!sapply(dag.tests, is.null)]
+
+##find unique dags
+unique.ci.dags <- find.unique.dags(dag.tests)
+```
+
+## Model Fitting
+```{r}
+##Here we define a function to fit to each model (Bayesian Method)
+##And extract Classification Metrics
+##Then we fit each model
+
+##Function to fit, predict, and return results for bn.learn object
+fit.predict.bnlearn <- function(bn, train_data, test_data, target.node, iss){
+  ##Input:
+  ##bn: bn object or DAG
+  ##train_data: data to fit the model to
+  ##test_data: data to test model fit on
+  ##target.node: for prediction-which class to predict for
+  ##iss: imaginary sample size; required for the bayes posterior prediction
+  
+  ##Output:
+  ##output: list containing confusion matrix results (sensitivity and specificity),
+  ##        Multiclass summary results, and the fitted model
+  
+  ##Can only predict with directed arcs, so removing undirected arcs
+  directed.dag <- empty.graph(nodes = names(bn$nodes))
+  arcs(directed.dag) <- directed.arcs(bn)
+  
+  ##fit model with bayesian posterior method (uses uniform prior)
+  fitted.model <- bn.fit(directed.dag, data = train_data, method = "bayes", iss = iss)
+  
+  ##predict test.data (which can also be the training data if that is entered here)
+  target_index <- which(colnames(test_data) == target.node) ##column of target node
+  X <- test_data[,-target_index] ##data without target node
+  y <- test_data[,target_index] ##target node
+  fit.predict <- predict(fitted.model, data = X, node = target.node, ##predict target node
+                         method = "bayes-lw", prob = T) ##bayes predictor/return probs 
+  
+  ##results: Confusion Matrix results and Multiclass summary
+  confusion.mat.res <- confusionMatrix(data = fit.predict, 
+                                       reference = y, 
+                                       mode = "prec_recall")
+  
+  multiclass.res <- multiClassSummary(data.frame(obs = y, pred = fit.predict),
+                                      lev = levels(y))
+  
+  ##output
+  output <- list(ConfusionMatResults = confusion.mat.res,
+                 MultiClassSummary = multiclass.res,
+                 fit = fitted.model)
+  
+  return(output)
+  
+}
+```
+
+
+```{r}
+##Now we do the actual fitting
+##This is computationally intenstive so it is commented out
+##and the results are saved as .rdata files
+
+#Create Model lists with base-dag and others
+orig_models <- c(list(base_dag = avg.boot6), unique.ci.dags_orig) ##Not oversampled
+oversampled_models <- c(list(base_dag = avg.boot8), unique.ci.dags) ##oversampled
+
+# ##apply model fitting to all DAGS
+# #run in parallel to reduce computational load
+# ##need foreach package because parLapply is not working
+# 
+# #create cluster
+# ncores <- ceiling(detectCores() * 0.65) ##use 65% of available cores (rounded up)
+# cl = makeCluster(ncores)
+# 
+# ##set random cluster seed for reproducibility
+# clusterSetRNGStream(cl, seed)
+# 
+# ##define cluster environment
+# clusterExport(cl, varlist = c("train_6", "train_6_oversample",
+#                               "fit.predict.bnlearn",
+#                               "packages"),
+#               envir=.GlobalEnv)
+# clusterEvalQ(cl, {sapply(packages, require, character.only = T)})
+# registerDoParallel(cl)
+# 
+# ####Trainging Set Prediction Results####
+# ##ie how well does it predict on the original training dataa
+# 
+# ##fit, predict, and get results for original (not oversampled) data
+# predict_res_orig <- foreach(i=1:length(orig_models)) %dopar%
+#   fit.predict.bnlearn(bn = orig_models[[i]],
+#                       train_data = train_6,
+#                       test_data = train_6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_orig) <- names(orig_models)
+# 
+# ##fit, predict, and get results for oversampled data
+# ##Note that we are testing on ORIGINAL dataset not oversampled
+# predict_res_oversample <- foreach(i=1:length(oversampled_models)) %dopar%
+#   fit.predict.bnlearn(bn = oversampled_models[[i]],
+#                       train_data = train_6_oversample,
+#                       test_data = train_6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_oversample) <- names(oversampled_models)
+# 
+# ####Internal Validation Set Prediction Results####
+# ##Testing for robustness in learning the structures
+# predict_res_orig_val <- foreach(i=1:length(orig_models)) %dopar%
+#   fit.predict.bnlearn(bn = orig_models[[i]],
+#                       train_data = train_6,
+#                       test_data = validation_6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_orig_val) <- names(orig_models)
+# 
+# ##fit, predict, and get results for oversampled data
+# ##Note that we are testing on ORIGINAL dataset not oversampled
+# predict_res_oversample_val <- foreach(i=1:length(oversampled_models)) %dopar%
+#   fit.predict.bnlearn(bn = oversampled_models[[i]],
+#                       train_data = train_6_oversample,
+#                       test_data = validation_6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_oversample_val) <- names(oversampled_models)
+# 
+# 
+# ####External Validation Set Prediction Results####
+# ##testing for generalizability
+# 
+# ##fit, predict, and get results for original (not oversampled) data
+# predict_res_orig_ext <- foreach(i=1:length(orig_models)) %dopar%
+#   fit.predict.bnlearn(bn = orig_models[[i]],
+#                       train_data = train_6,
+#                       test_data = external_df6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_orig_ext) <- names(orig_models)
+# 
+##fit, predict, and get results for oversampled data
+##Note that we are testing on ORIGINAL dataset not oversampled
+# predict_res_oversample_ext <- foreach(i=1:length(oversampled_models)) %dopar%
+#   fit.predict.bnlearn(bn = oversampled_models[[i]],
+#                       train_data = train_6_oversample,
+#                       test_data = external_df6,
+#                       target.node = "cogscore",
+#                       iss = 10)
+# names(predict_res_oversample_ext) <- names(oversampled_models)
+# 
+# stopCluster(cl)
+# 
+# ##Saving results to save future computation
+# saveRDS(predict_res_orig, "fit_orig_pred_orig.rdata")
+# saveRDS(predict_res_oversample, "fit_oversample_pred_orig.rdata")
+# saveRDS(predict_res_orig_val, "fit_orig_predict_val.rdata")
+# saveRDS(predict_res_oversample_val, "fit_oversample_predict_val.rdata")
+# saveRDS(predict_res_orig_ext, "fit_orig_predict_ext.rdata")
+# saveRDS(predict_res_oversample_ext, "fit_oversample_predict_ext.rdata")
+```
+
+## Model Validation Results
+```{r}
+##Function to generate data for summary report
+generate.res.table <- function(results.summary, results.cols) {
+  ##Input:
+  ##results.summary: Dataframe that contains confusion matrix results
+  ##results.cols: which of the confusion matrix columns we care about
+  ##              Here we only care about Sensitivity, Specificity 
+  ##              and Balanced Accuracy so it is hard coded in here
+  
+  ##Output:
+  ##results.table: A table formatted with classification metrics for each
+  ##               Impairment Class along with the combined score and overall rank
+  
+  ##subset the results columns
+  results.table <- results.summary[, results.cols]
+  
+  ##Group by output class (Here this is Impairment Status: severe, mild, unimpaired)
+  ##then split the data into three separate dataframes by class
+  ##and from each dataframe select only the DAG name, sensitivity, specificity, and accuracy
+  results.table <- results.table %>% group_by(Class) %>% group_split()
+  
+  results.table <- lapply(results.table, function(X) {
+    df <- X %>% as.data.frame() %>% `row.names<-`(X$DAG) ##set row name as dag
+    df <- df %>% dplyr::select("DAG",
+                           "Sensitivity",
+                           "Specificity",
+                           "Balanced Accuracy") ##select metrics of interest
+    return(df)
+  })
+
+  ##combine data from each class together
+  results.table <- results.table %>% reduce(left_join, by = "DAG")##Add class data together
+  
+  ##Create score for Severe/Mild/Unimpaired 
+  ##(Sensitivity (Severe) + Sensitivity (Mild) + Specificity (Unimpaired))
+  ##And Rank (Highest to Lowest)
+  results.table <- results.table %>% 
+    mutate(Combined_Score = Sensitivity.x + Sensitivity.y + Specificity,
+           Overall_Rank = frank(-(Combined_Score)))
+  
+  ##Arrange according to overall rank 
+  ##Highest Sensitivity for impaired-Mild and Severe
+  ##And highest specificity for Unimpaired
+  results.table <- results.table %>% arrange(Overall_Rank)
+  
+  ##rename columns (All have same names (Except Rank; See next lines)), so use rep
+  colnames(results.table) <-c("DAG", rep( c("Sensitivity",
+                                            "Specificity",
+                                            "Balanced Accuracy"),3),
+                              "Combined Score",
+                              "Overall Rank")
+  
+  ##round data columns to 3 decimal places
+  round.cols <- colnames(results.table) %in% c("Sensitivity", "Specificity", 
+                                               "Balanced Accuracy", "Combined Score") 
+  results.table[, round.cols] <- round(results.table[, round.cols], 3) ##Round to 3 decimals
+  
+  
+  ##return results
+  return(results.table)
+}
+
+```
+
+### All Model Validation Results
+```{r}
+##The following code extracts the Confusion matrix results for each dataset
+##Then summarizes those results into a table format that we can print
+##using the "generate.res.table" function defined above
+
+##First load in the prediction results we saved earlier
+predict_res_orig <- readRDS("fit_orig_pred_orig.rdata")
+predict_res_oversample <- readRDS("fit_oversample_pred_orig.rdata")
+predict_res_orig_val <- readRDS("fit_orig_predict_val.rdata")
+predict_res_oversample_val <- readRDS("fit_oversample_predict_val.rdata")
+predict_res_orig_ext <- readRDS("fit_orig_predict_ext.rdata")
+predict_res_oversample_ext <- readRDS("fit_oversample_predict_ext.rdata")
+
+######Model Prediction Results: Training Data######
+
+##combine data into interpretable summary (oversampled data)
+results.summary_orig <- do.call(rbind, lapply(predict_res_orig, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary_orig[,"DAG"] <- rep(names(predict_res_orig), each = 3)
+results.cols <- c("DAG", "Sensitivity", "Specificity", "Balanced Accuracy", "Class")
+results.table_orig <- generate.res.table(results.summary_orig, results.cols) ##generate table
+
+
+##combine data into interpretable summary (oversampled data)
+results.summary <- do.call(rbind, lapply(predict_res_oversample, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary[,"DAG"] <- rep(names(predict_res_oversample), each = 3)
+results.cols <- c("DAG", "Sensitivity", "Specificity", "Balanced Accuracy", "Class")
+results.table <- generate.res.table(results.summary, results.cols) ##generate table
+colnames(results.table)[1] <- "Oversampled DAG" ##rename oversampled
+
+######Model Prediction Results: Internal Validation Set######
+
+##combine data into interpretable summary (oversampled data)
+results.summary_orig_val <- do.call(rbind, lapply(predict_res_orig_val, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary_orig_val[,"DAG"] <- rep(names(predict_res_orig_val), each = 3)
+results.table_orig_val <- generate.res.table(results.summary_orig_val,
+                                             results.cols)##generate table
+
+
+##combine data into interpretable summary (oversampled data)
+results.summary_val <- do.call(rbind, lapply(predict_res_oversample_val, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary_val[,"DAG"] <- rep(names(predict_res_oversample_val), each = 3)
+results.table_val <- generate.res.table(results.summary_val, results.cols) ##generate table
+colnames(results.table_val)[1] <- "Oversampled DAG" ##Rename oversampled
+
+
+
+######Model Prediction Results: External Validation Set######
+
+##combine data into interpretable summary (not oversampled data)
+results.summary_orig_ext <- do.call(rbind, lapply(predict_res_orig_ext, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary_orig_ext[,"DAG"] <- rep(names(predict_res_orig_ext), each = 3)
+results.table_orig_ext <- generate.res.table(results.summary_orig_ext, 
+                                             results.cols)##generate table
+
+
+##combine data into interpretable summary (oversampled data)
+results.summary_ext <- do.call(rbind, lapply(predict_res_oversample_ext, function(X){
+  df <- as.data.frame(X[["ConfusionMatResults"]][["byClass"]]) ##Extract Class metrics
+  df <- df %>% dplyr::mutate(Class = row.names(df)) ##Add column for class/levels
+}))
+
+##add DAG column to data and then generate results using function we defined above
+results.summary_ext[,"DAG"] <- rep(names(predict_res_oversample_ext), each = 3)
+results.table_ext <- generate.res.table(results.summary_ext, 
+                                        results.cols)##generate table
+colnames(results.table_ext)[1] <- "Oversampled DAG" ##Rename oversampled
+
+##save all internal validation results table but only the oversampled external
+##for the rbookdown file/dissertation results
+saveRDS(results.table_orig_val, "Original_Data_Internal_Validation.rdata")
+saveRDS(results.table_val, "Oversampled_Internal_Validation.rdata")
+saveRDS(results.table_ext, "Oversampled_External_Validation.rdata")
+```
+
+The following are the html kable tables for the full model validations
+```{r}
+##creating nice tables for summary of metrics
+##These need to be screenshot for the report due to issues with save_kable
+
+######Model Results: Internal Validation Set######
+
+##Original Data
+kbl((results.table_orig_val),  table.attr = "style='width:80%;'") %>% 
+  kable_classic() %>%
+  add_header_above(c("" , "Severe" = 3, "Mild" = 3,
+                     "Unimpaired" = 3, "Combined" = 2), bold = T) 
+
+
+##Oversampled
+kbl((results.table_val),  table.attr = "style='width:80%;'") %>% 
+  kable_classic() %>%
+  add_header_above(c("" , "Severe" = 3, "Mild" = 3,
+                     "Unimpaired" = 3, "Combined" = 2), bold = T) 
+
+
+######Model Results: External Validation Set######
+
+##Oversampled
+kbl((results.table_ext),  table.attr = "style='width:80%;'") %>% 
+  kable_classic() %>%
+  add_header_above(c("" , "Severe" = 3, "Mild" = 3,
+                     "Unimpaired" = 3, "Combined" = 2), bold = T) 
+```
+### Selected Model Validation Results
+```{r}
+##Selected Results (Top 2 internal + Top external + Base) for dissertation
+results_models <- c("dag_39", "dag_32", "dag_31", "base_dag")
+results_val_ind <- which(results.table_val$`Oversampled DAG` %in% results_models)
+results_ext_ind <- which(results.table_ext$`Oversampled DAG` %in% results_models)
+
+res.table_val_selected <- results.table_val[results_val_ind,]
+res.table_ext_selected <- results.table_ext[results_ext_ind,]
+
+##Save for presentation in dissertation
+saveRDS(res.table_val_selected, "Oversampled_Selected_Int_Val.rdata")
+saveRDS(res.table_ext_selected, "Oversampled_Selected_Ext_Val.rdata")
+
+######Model Results: Internal Validation Set######
+
+##Oversampled
+kbl(res.table_val_selected, row.names = F,
+    table.attr = "style='width:80%;'") %>% 
+  kable_classic() %>%
+  add_header_above(c("" , "Severe" = 3, "Mild" = 3,
+                     "Unimpaired" = 3, "Combined" = 2), bold = T)
+
+
+######Model Results: External Validation Set######
+
+##Oversampled
+kbl(res.table_ext_selected,  row.names = F,
+     table.attr = "style='width:80%;'") %>% 
+  kable_classic() %>%
+  add_header_above(c("" , "Severe" = 3, "Mild" = 3,
+                     "Unimpaired" = 3, "Combined" = 2), bold = T)
+
+
+```
+
+##Results
+
+```{r}
+##DAGs 39 and 32 are the best internal DAGs
+##BAD 32 is the best external
+##Only presenting results on 39 in dissertation
+
+##Function to compare graphs and edit the font
+graphviz.compare.font <- function(x, font=20, ...){
+  g <- graphviz.compare(x = x, ...)
+  g <-lapply(g, function(X) {
+    graph::nodeRenderInfo(X) <- list(fontsize = font)
+    Rgraphviz::renderGraph(X)
+  })
+}
+
+
+##Plotting Selected DAGS
+graphviz.compare.font(oversampled_models[["base_dag"]],
+                      oversampled_models[["dag_39"]],
+                      oversampled_models[["dag_32"]],
+                      oversampled_models[["dag_31"]],
+                      font = 25)
+
+
+
+```
+### Query Data for Conditional Probabilities
+```{r}
+##select the fits to perform queries on the data
+
+set.seed(seed)
+
+##Selecting best internal validation dags and best external
+dag39_fit <-  predict_res_oversample$dag_39$fit
+dag32_fit <-  predict_res_oversample$dag_32$fit
+dag31_fit <-  predict_res_oversample$dag_31$fit
+
+```
+
+
+```{r}
+##Here we query the graphs to find the conditional probability of cogscore given age
+
+age.levels <- levels(train_6$age) ##age levels
+cogscore.levels <- levels(train$cogscore) ##cogscore levels
+n.cog <- length(cogscore.levels) ##number of levels in cogscore; will be 3
+dagfit.list <- list(dag39_fit, dag32_fit, dag31_fit) ##list of our selected dags
+
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+
+age.res <- c() ##list for results
+for(dag in dagfit.list) { ##perform for each dag
+  
+  for (cog in cogscore.levels) {##test each cogscore impairment status
+    temp.age <- c() ##additional temporary list
+    for (j in age.levels) { ##test for each age
+      ##query for each age is shown below
+      temp.age <- c(temp.age,
+                    cpquery(
+                      dag, ##selected dag
+                      n = 10 ^ 6, ##imaginary sample size
+                      evidence = (age == j), ##evidence for each age
+                      event = (cogscore %in% cog) ##for each cogscore
+                    ))
+    }
+    
+    age.res <- c(age.res, temp.age) ##report results
+  }
+}
+
+
+##Create a dataframe with all results that we can use to plot
+##the structure of the rep() calls is designed so that it follows the loop above
+##We tested to esnure it works
+age.df <- data.frame(cond.probs = age.res, ##all age results
+                      age = rep(rep(age.levels, 3), length(dagfit.list)), ###
+                      cogscore = factor(rep(rep(cogscore.levels, each = length(age.levels)),
+                                     length(dagfit.list)),
+                                     levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(age.levels)*n.cog))
+
+
+##Plot the results only for our best DAG since DAG39 and DAG32 are
+##Essentially equivalent based on the classification results
+ggplot(age.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = age, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  facet_wrap(~cogscore, nrow = 3)+
+  labs(x = "Age", y = "P(Impairment Status|Age)")+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Impairment Status Given Age")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+ggsave("dag_39_age_query.png", width = 7, height = 7)
+
+```
+
+```{r}
+##Here we query the graphs to find the conditional probability of cogscore given sex
+
+female <- levels(train_6$female) ##sex (female) levels
+fem.res <- c() ##empty list to contain our results
+
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+
+for(dag in dagfit.list) {
+  
+  for (cog in cogscore.levels) {
+    temp.res <- c()
+    for (j in female) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (female == j),
+                      event = (cogscore %in% cog)
+                    ))
+    }
+    
+    fem.res <- c(fem.res, temp.res)
+  }
+}
+
+##create dataframe with results. Follows structure of loop
+fem.df <- data.frame(cond.probs = fem.res,
+                     female = rep(rep(female, 3), length(dagfit.list)),
+                     cogscore = factor(rep(rep(cogscore.levels, each = length(female)),
+                                     length(dagfit.list)),
+                                     levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), each = length(female)*n.cog))
+
+
+##change factor to be "longer" so it matches the size of the other plots for formatting
+fem.df$female <- factor(fem.df$female, 
+                        labels = c("                                    Female",
+                                   "                                      Male"))
+
+#Plot conditional probabilities by age BASE DAG
+##Only plotting DAG39 because found relatively equivalent to DAG32
+ggplot(fem.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = female, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Sex", y = "P(Impairment Status|Sex)")+
+  theme_bw()+
+  facet_wrap(~cogscore, nrow = 3)+
+  ggtitle("DAG 39: Probability of Impairment Status Given Sex")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title= element_text(hjust = 0.5))
+
+
+
+ggsave("dag_39_sex_query.png", width = 7,height= 7)
+```
+
+```{r}
+##Check prob of each cogscore given education from each DAG
+
+education.levels <- c("In School/Other",
+                      "No Education",
+                      "Primary", "Lower Secondary",
+                      "Upper Secondary ", "Post-secondary Non-tertiary",
+                      "First State Tertiary", "Second State Tertiary",
+                      "No Info/Don't Know/Refused")
+
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+
+edu.res <- c()
+for(dag in dagfit.list) {
+  
+  for (cog in cogscore.levels) {
+    temp.res <- c()
+    for (j in education.levels) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (education == j),
+                      event = (cogscore %in% cog)
+                    ))
+    }
+    
+    edu.res <- c(edu.res, temp.res)
+  }
+}
+
+##create results dataframe for plotting
+##follows structure of loop
+edu.df <- data.frame(cond.probs = edu.res,
+                     education = rep(rep(education.levels, 3), 
+                                      length(dagfit.list)),
+                    cogscore = factor(rep(rep(cogscore.levels, 
+                                              each = length(education.levels)),
+                                          length(dagfit.list)),
+                                      levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(education.levels)*n.cog))
+edu.df$education <- factor(edu.df$education, levels = education.levels)
+
+
+##Probability impairment given education
+##Only plotting DAG 39 because found relatively equivalent to DAG32
+ggplot(edu.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = education, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Education (ISCED)", y = "P(Impairment Status|Education)")+
+  facet_wrap(~cogscore, nrow = 3)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Impairment Status Given Education")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("dag39_education_query.png", width = 7, height = 7)
+
+```
+
+
+```{r}
+##Query graphs to find the conditional probability of cognitive impairment given depression
+
+depr <- levels(train_6$depression)
+
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+depr.res <- c()
+for(dag in dagfit.list) {
+  
+  for (cog in cogscore.levels) {
+    temp.res <- c()
+    for (j in depr) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (depression == j),
+                      event = (cogscore %in% cog)
+                    ))
+    }
+    
+    depr.res <- c(depr.res, temp.res)
+  }
+}
+
+##create dataframe for depression results
+depr.df <- data.frame(cond.probs = depr.res,
+                      depression = rep(rep(depr, 3), 
+                                      length(dagfit.list)),
+                      cogscore = factor(rep(rep(cogscore.levels, 
+                                         each = length(depr)),
+                                     length(dagfit.list)),
+                                     levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(depr)*n.cog))
+##order depression levels
+depr.levels <- c(as.character(seq(0,12)), "No Info/Don't Know/Refused")
+depr.df$depression <- factor(depr.df$depression,
+                             levels = depr.levels)
+
+
+##Probability of Impairment Status given Depression
+##Only plotting DAG39 because found relatively equivalent to DAG32
+ggplot(depr.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = depression, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Depression", y = "P(Impairment Status|Depression)")+
+  facet_wrap(~cogscore, nrow = 3)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Impairment Status Given Depression")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("dag39_depression_query.png", width = 7, height = 7)
+
+```
+
+```{r}
+##Quality of life
+
+life_qual <- levels(train$casp)
+
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+casp.res <- c()
+for(dag in dagfit.list) {
+  
+  for (cog in cogscore.levels) {
+    temp.res <- c()
+    for (j in life_qual) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (casp == j),
+                      event = (cogscore %in% cog)
+                    ))
+    }
+    
+    casp.res <- c(casp.res, temp.res)
+  }
+}
+
+casp.df <- data.frame(cond.probs = casp.res,
+                      life_qual = rep(rep(life_qual, 3), 
+                                      length(dagfit.list)),
+                      cogscore = factor(rep(rep(cogscore.levels, 
+                                         each = length(life_qual)),
+                                     length(dagfit.list)),
+                                     levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(life_qual)*n.cog))
+
+
+##Probability of impairment status given quality of life
+##Only plotting DAG39 because found relatively equialent to DAG 32
+
+ggplot(casp.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = life_qual, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Quality of Life (CASP)", y = "P(Impairment Status|CASP)")+
+  facet_wrap(~cogscore, nrow = 3)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Impairment Status given Quality of Life (CASP)")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("dag39_quality_of_life_query.png", width = 7, height = 7)
+
+```
+
+```{r}
+##Query DAGs for conditional probability of cognitive impairment given drinking
+
+drink.levels <- c("Not at all",
+                  "<1 times\nper month", "1-2 days\nper week",
+                  "1-2 times\nper month","3-4 days\nper week",
+                  "5-6 days\nper week", "Almost daily","No Info/Don't Know/\nRefused")       
+##To query the graph we use a for loop so that we can
+##Check the probability of each cognitive score given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+drink.res <- c()
+for(dag in dagfit.list) {
+  
+  for (cog in cogscore.levels) {
+    temp.res <- c()
+    for (j in drink.levels) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (drinking == j),
+                      event = (cogscore %in% cog)
+                    ))
+    }
+    
+    drink.res <- c(drink.res, temp.res)
+  }
+}
+
+##create drinking conditional probability dataframe
+drink.df <- data.frame(cond.probs = drink.res,
+                      drinking = rep(rep(drink.levels, 3), 
+                                      length(dagfit.list)),
+                      cogscore = factor(rep(rep(cogscore.levels, 
+                                         each = length(drink.levels)),
+                                     length(dagfit.list)),
+                                     levels = cogscore.levels),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(drink.levels)*n.cog))
+drink.df$drinking <- factor(drink.df$drinking, 
+                            levels = drink.levels)
+
+##rename the missing data so that it is the same format as the rest
+levels(drink.df$drinking)[8]<- "No Info/Don't Know/Refused"
+
+##Only plotting DAG_32 because drinking was only found significant in DAG_32
+
+ggplot(drink.df %>% dplyr::filter(dag == "dag_32"))+
+  geom_bar(aes(x = drinking, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Drinking Level", y = "P(Impairment Status|Drinking)")+
+  facet_wrap(~cogscore, nrow = 3)+
+  theme_bw()+
+  ggtitle("DAG 32: Probability of Impairment Status Given Drinking Level")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, size = 8, hjust = 1))
+
+ggsave("dag32_drinking_query.png", width = 7, height = 7)
+
+
+
+```
+
+### Following Interaction Pathways For Risk Factors Upstream of Cognitive Score
+```{r}
+##Query the graph to find the probability of low quality of life given educaiton
+education.levels <- education.levels
+casp.fixed <- c("[12,16)","[16,20)", "[20,24)", ##Low
+                "[24,28)","[28,32)",  "[32,36)", "[36,40)", ##Mid
+                "[40,44)", "[44,48)", "[48,52)") ##High
+
+##To query the graph we use a for loop so that we can
+##Check the probability of quality of life given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+casp.ed.res <- c()
+for(dag in dagfit.list) {
+  
+  for (casp.i in casp.fixed) {
+    temp.res <- c()
+    for (j in education.levels) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (education == j),
+                      event = (casp %in% casp.i)
+                    ))
+    }
+    
+    casp.ed.res <- c(casp.ed.res, temp.res)
+  }
+}
+
+##conditional probability dataframe for casp through education
+casp.ed.df <- data.frame(cond.probs = casp.ed.res,
+                         education = rep(rep(education.levels, length(casp.fixed)), 
+                                      length(dagfit.list)),
+                         casp = factor(rep(rep(casp.fixed, 
+                                         each = length(education.levels)),
+                                     length(dagfit.list)),
+                                     levels = casp.fixed),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(education.levels)*length(casp.fixed)))
+casp.ed.df$education <- factor(casp.ed.df$education, levels = education.levels)
+
+
+##Group casp results by Low/Mid/High life Quality
+casp.ed.df <- casp.ed.df %>% 
+  mutate(class = case_when(casp %in% c("[12,16)","[16,20)","[20,24)") ~ "Low Life Quality [16,24)",
+                           casp %in% c("[24,28)","[28,32)",
+                                       "[32,36)","[36,40)") ~ "Medium Life Quality [24,40)",
+                           TRUE ~ "High Life Quality [40,52)"))
+
+
+##calc cond prob in groups by marginalizing over the groups here
+casp.ed.df <- casp.ed.df %>% group_by(education, class, dag) %>%
+  summarise(cond.probs = sum(cond.probs)) %>% ungroup()
+casp.ed.df$casp = casp.ed.df$class
+casp.ed.df$casp = factor(casp.ed.df$casp, 
+                               levels = c("Low Life Quality [16,24)", 
+                                          "Medium Life Quality [24,40)",
+                                          "High Life Quality [40,52)"))
+
+
+##Plot conditional probabilities for low/high casp given education levels
+##Only plotting DAG39 because relatively equivalent to DAG32
+ggplot(casp.ed.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = education, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x="Education (ISCED)", y = "P(CASP|Education)")+
+  facet_wrap(~casp, nrow = 4)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Quality of Life (CASP) Given Education")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, size = 8, hjust = 1))
+
+ggsave("dag39_casp_through_education_query.png", width = 7, height = 7)
+
+```
+
+
+```{r}
+##We query the graph to find the conditional probability of depression
+##given quality of life
+casp.levels <- levels(train_6$casp) ##levels defined before
+depr.fixed <- as.character(seq(0,12)) ##least depressed to most depression
+
+
+##To query the graph we use a for loop so that we can
+##Check the probability of quality of life given each level of the data
+
+##Loop follows the same structure as the first with age so it is not commented
+depr.casp.res <- c()
+for(dag in dagfit.list) {
+  
+  for (depr.i in depr.fixed) {
+    temp.res <- c()
+    for (j in casp.levels) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (casp == j),
+                      event = (depression %in% depr.i)
+                    ))
+    }
+    
+    depr.casp.res <- c(depr.casp.res, temp.res)
+  }
+}
+
+##create conditional probability data frame
+depr.casp.df <- data.frame(cond.probs = depr.casp.res,
+                           casp = rep(rep(casp.levels, length(depr.fixed)), 
+                                      length(dagfit.list)),
+                         depression = factor(rep(rep(depr.fixed, 
+                                         each = length(casp.levels)),
+                                     length(dagfit.list)),
+                                     levels = depr.fixed),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(casp.levels)*length(depr.fixed)))
+depr.casp.df$casp <- factor(depr.casp.df$casp, levels = casp.levels)
+
+
+##Create depression groups
+depr.casp.df <- depr.casp.df %>% 
+  mutate(class = case_when(depression %in% c("0", "1", "2", "3") ~ "Low Depression (0-3)",
+                           depression %in% c("4", "5", "6", "7", "8") ~ "Mild Depression (4-8)",
+                           TRUE ~ "High Depression (9-12)"))
+  
+##calc cond prob in depression groups by marginalizing over the groups
+depr.casp.df <- depr.casp.df %>% group_by(casp, class, dag) %>%
+  summarise(cond.probs = sum(cond.probs)) %>% ungroup()
+depr.casp.df$depression = depr.casp.df$class
+depr.casp.df$depression = factor(depr.casp.df$depression, 
+                                  levels = c("Low Depression (0-3)", 
+                                             "Mild Depression (4-8)", 
+                                             "High Depression (9-12)"))
+
+
+
+#Plot conditional probabilities for low/Mid/high Depr given sphus levels
+##Only plotting dag39 because relatively equivalent to dag32
+ggplot(depr.casp.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = casp, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Quality of life (CASP)", y = "P(Depression|CASP)")+
+  facet_wrap(~depression, nrow = 4)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Depression Given Quality of Life (CASP)")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, size = 8, hjust = 1))
+
+ggsave("dag39_depression_through_casp_query.png", width = 7, height = 7)
+
+
+```
+
+
+```{r}
+##We query the graph to plot the conditional probability of depression give
+##perceived health
+sphus.levels <- c("poor","fair","good",
+                  "very good","excellent","No Info/Don't Know/\nRefused")
+depr.fixed <- as.character(seq(0,12)) ##least depressed to most depression
+
+##Loop follows the same structure as the first with age so it is not commented
+depr.sphus.res <- c()
+for(dag in dagfit.list) {
+  
+  for (depr.i in depr.fixed) {
+    temp.res <- c()
+    for (j in sphus.levels) {
+      temp.res <- c(temp.res,
+                    cpquery(
+                      dag,
+                      n = 10 ^ 6,
+                      evidence = (sphus == j),
+                      event = (depression %in% depr.i)
+                    ))
+    }
+    
+    depr.sphus.res <- c(depr.sphus.res, temp.res)
+  }
+}
+
+##create conditional probability data frame
+depr.sphus.df <- data.frame(cond.probs = depr.sphus.res,
+                            sphus = rep(rep(sphus.levels, length(depr.fixed)), 
+                                      length(dagfit.list)),
+                         depression = factor(rep(rep(depr.fixed, 
+                                         each = length(sphus.levels)),
+                                     length(dagfit.list)),
+                                     levels = depr.fixed),
+                     dag = rep(c("dag_39", "dag_32", "dag_31"), 
+                               each = length(sphus.levels)*length(depr.fixed)))
+depr.sphus.df$sphus <- factor(depr.sphus.df$sphus, levels = sphus.levels)
+
+##rename sphus levels to match other plots
+levels(depr.sphus.df$sphus)[6] <- "No Info/Don't Know/Refused"
+
+
+##create depression groups
+depr.sphus.df <- depr.sphus.df %>% 
+  mutate(class = case_when(depression %in% c("0", "1", "2", "3") ~ "Low Depression (0-3)",
+                           depression %in% c("4", "5", "6", "7", "8") ~ "Mild Depression (4-8)",
+                           TRUE ~ "High Depression (9-12)"))
+
+##calc cond prob in lowest or highest by marginalizing over the levels in the groups
+depr.sphus.df <- depr.sphus.df %>% group_by(sphus, class, dag) %>%
+  summarise(cond.probs = sum(cond.probs)) %>% ungroup()
+depr.sphus.df$depression = depr.sphus.df$class
+depr.sphus.df$depression = factor(depr.sphus.df$depression, 
+                                  levels = c("Low Depression (0-3)", 
+                                             "Mild Depression (4-8)", 
+                                             "High Depression (9-12)"))
+
+
+
+##Plot conditional probabilities for low/Mid/high Depr given sphus levels
+##Only plotting DAG39 because found relatively equivalent to DAG32
+ggplot(depr.sphus.df %>% dplyr::filter(dag == "dag_39"))+
+  geom_bar(aes(x = sphus, y = cond.probs),
+           fill = "lightblue", color = "darkblue",
+           stat = "identity")+
+  labs(x = "Self-Perceived Health (SPHUS)", y = "P(Depression|SPHUS)")+
+  facet_wrap(~depression, nrow = 4)+
+  theme_bw()+
+  ggtitle("DAG 39: Probability of Depression Given Self-Perceived Health (SPHUS)")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, size = 8, hjust = 1))
+
+ggsave("dag39_depression_through_sphus_query.png", width = 7, height = 7)
+```
+
+## Extra Graphs for Dissertation
+```{r}
+##Examples of cyclic and acyclic graphs
+cyclic.graph <- empty.graph(LETTERS[1:5])
+arcs(cyclic.graph, check.cycles = F) <- matrix(c("A", "B", 
+                               "B", "C", 
+                               "C", "A",
+                               "B", "D",
+                               "D", "E"),
+                             ncol = 2, byrow = T,
+                             dimnames = list(NULL, c("from", "to")))
+dag.example <- empty.graph(LETTERS[1:5])
+arcs(dag.example) <- matrix(c("A", "B",
+                              "B", "C",
+                              "B", "D",
+                              "D", "E"),
+                             ncol = 2, byrow = T,
+                             dimnames = list(NULL, c("from", "to")))
+
+##Save graphs
+png("cyclic_graph_example.png")
+graphviz.plot(cyclic.graph, layout = "dot")
+dev.off()
+
+png("DAG_example.png")
+graphviz.plot(dag.example, layout = "dot")
+dev.off()
+
+
+```
+### Renamed DAGs for Plotting
+
+```{r}
+##select graphs
+base_dag <- oversampled_models[["base_dag"]] ##base dag
+dag_39 <- oversampled_models[["dag_39"]] ##best dag with casp and depr added
+dag_32 <- oversampled_models[["dag_32"]] ##second best with depr and drinking
+dag_31 <- oversampled_models[["dag_31"]] ##most generalizable with phys_activity and drinking
+
+##rename nodes
+new_nodes <- c("cognitive\nimpairment", "sex","age","education","perceived\nhealth","bmi",
+               "physical\nactivity", "smoking","daily\nsmoking","drinking",
+               "quality\nof life","depression", "hhsize", "marital\nstatus","income")
+base_dag <- rename.nodes(base_dag, new_nodes)
+dag_39 <- rename.nodes(dag_39, new_nodes)
+dag_32 <- rename.nodes(dag_32, new_nodes)
+dag_31 <- rename.nodes(dag_31, new_nodes)
+
+##visualizing dags and chaning font
+##We needed a screen capture to get these plots into the report
+pdf("select_DAGS-%03d.pdf", onefile = FALSE)
+graphviz.compare.font(base_dag,
+                      dag_39,
+                      dag_32,
+                      dag_31, font = 18)
+dev.off()
+```
+### variables and levels table
+```{r}
+##Here we make a table with each of the variables,
+##Their levels, and a brief description for those that are not obvious
+
+##definiing each variable
+definitions <- c("Defined using cognitive scores made from recall and orientation. Severe is 1.5 sd below the mean. Mild is between 1.5 and 1 sd below the mean. Unimpaired is the rest.", 
+                 "--", "--", "--", "Self-perceived health from a US survey",
+                 "Body Mass Index", 
+                 "Measured sports, heavy housework, or physical labor",
+                 "Currently smoking", "Ever smoked daily for at least 1 year", 
+                 "Drinking levels for the past 3 months (wave 1: 6 months)", 
+                 "CASP score. Measures feelings of control, autonomy, pleasure, and self-realization",
+                 "EURO-D score. Measures depressed mood, pessimism, suicidality, guilt, sleep, interest, irritability, appetite, fatigue, concentration, enjoyment and teaffulness",
+                 "Household size", "--", "Net income divided by household size")
+
+##manually specify some levels to make more interpretable
+cogscore.levels <- cogscore.levels ##defined earlier
+sex.levels <- female ##defined earlier
+age.levels <- age.levels ##defined earlier
+education.levels <- education.levels ##defined earlier
+health.levels <- sphus.levels ##defined earlier
+bmi.levels <- c("Underweight", "Overweight", "Healthy", "No Info/Don't Know/Refused")
+phys.levels <- c("Rare/Never", "1-3 per month","1 per week", 
+                 ">1 per Week", "No Info/Don't Know/Refused")  
+smoking.levels <- daily.smoke.lev <- c("No", "Yes", "No Info/Don't Know/Refused")
+drink.levels.new <- c("Not at all","<1 times\nper month",
+                      "1-2 days\nper week","1-2 times\nper month", 
+                      "3-4 days\nper week", "5-6 days\nper week", 
+                      "Almost daily","No Info/Don't Know/\nRefused")
+quality.life.levels <- casp.levels ##defined earlier
+depression.levels.new <- c("0-12 (each its own level), No Info/Don't Know/Refused")
+hhsize.levels <- c("0-12, 14 (each its own level)") ##each their own level, but 13 is missing
+marital.levels <- c("Divorced","Married w/o Spouse",
+                    "Married w/ Spouse","Never Married",
+                    "Partnership","Widowed","No Info/Don't Know/Refused")
+income_levels <- c("[-10000,0), [0,10000), ..., [140000,150000), [150000,Max)")
+
+##combine into single characters for table
+levels.list <- list(cogscore.levels, sex.levels, age.levels, education.levels,
+                    health.levels, bmi.levels, phys.levels, smoking.levels,
+                    daily.smoke.lev, drink.levels.new, quality.life.levels, 
+                    depression.levels.new, hhsize.levels, marital.levels, income_levels)
+var_levels <- sapply(levels.list, paste, collapse = ", ")
+
+
+variable_table <- data.frame(Variable = new_nodes, Levels = var_levels,
+                             Definitions = definitions)
+
+
+##build table
+kbl((variable_table),  table.attr = "style='width:80%;'", booktabs = T) %>%
+  kable_classic()%>%
+  column_spec(column = c(1), width = "1em")%>%
+  column_spec(column = c(2,3), width = "8em") %>%
+  kable_styling(font = 16)
+
+
+```
+
+## Datasets and Countries Table
+
+```{r}
+##first select the countries used internally
+country_intern <- country_intern ##internally countries; created before
+country_extern <- countries[!(countries %in% country_intern)]
+country_vector <- sapply(list(country_intern, "--", ##once for train/test each
+                              country_extern), paste, collapse = ", ")
+
+##create table data
+country_table <- data.frame(dataset = c("Internal Training", 
+                                        "Internal Validation",
+                                        "External Validation"),
+                            countries = country_vector, ##vector w/ countries in eahc
+                            percentage = c(length(country_intern)/length(countries),
+                                           "--",
+                                           length(country_extern)/length(countries)),
+                            N = c(nrow(train_6), ##internal training
+                                  nrow(validation_6),##internal validation
+                                  nrow(external_df6))) ##external n
+
+colnames(country_table) <- c("Dataset", "Countries", 
+                             "Proportion of Countries", "N")
+
+
+##create table
+
+kbl((country_table),  table.attr = "style='width:80%;'", booktabs = T) %>%
+  kable_classic()%>%
+  column_spec(column = c(2), width = "15em")%>%
+  # column_spec(column = c(2,3), width = "8em") %>%
+  kable_styling(font = 12)
+```
+

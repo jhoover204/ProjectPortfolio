@@ -1,0 +1,1042 @@
+---
+title: "Dementia Risk Factors"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# rm(list = ls())
+```
+
+Load data
+```{r}
+# Load the easySHARE data. For information on data and variables, see the 
+##[easySHARE data  guide]
+##(http://www.share-project.org/fileadmin/pdf_documentation/easySHARE_Release_8.0.0_ReleaseGuide.pdf).
+load("./easySHAREData/easySHARE_rel8_0_0.rda")
+
+##save as another df for manipulation
+df <- data <- easySHARE_rel8_0_0
+rm(easySHARE_rel8_0_0)
+gc()##clear unused memory
+```
+
+
+Load packages:
+
+```{r, message = FALSE, include = FALSE}
+##Load Packages
+packages <- c("ggplot2", "tidyverse", "gridExtra", "ggpubr", "data.table",
+              "dplyr", "mice", "VIM", "JointAI", "corrplot", "bnlearn",
+              "gRain")
+sapply(packages, function(X){if(!(X %in% installed.packages())) install.packages(X)})
+sapply(packages, require, character.only = TRUE)
+
+```
+
+## Exploratory Data Analysis
+
+Here we define potential risk factors from data
+```{r}
+##define potential variables to keep based on literature
+
+##variables for identification
+ident_vars <- c("mergeid", "hhid", "coupleid", "wave", 
+                "wavepart", "country")
+
+
+##Variables of interest
+base_vars <- c("age", "female",
+               "isced1997_r", ##education
+               "sphus", "bmi",  ##physical health
+               "smoking", "ever_smoked", ##smoking
+               "br010_mod", ##drinking
+               "casp", "eurod", ##depression/mental health
+               "br015_", ##physical activity
+               "hhsize","mar_stat", ##social contact
+               "thinc_m" ##socioeconomic
+               )
+
+##Response Variables
+resp_vars <- c("recall_1", "recall_2", "orienti")
+
+##select variables to keep and drop others
+# keep_vars <- c(ident_vars, resp_vars, base_vars, add_vars)
+keep_vars <- c(ident_vars, resp_vars, base_vars)
+df <- df %>% dplyr::select(all_of(keep_vars))
+```
+
+Baseline Data
+
+We will be performing a cross-sectional analysis on the data looking only at the first interview, or baseline interview per person. Before, further analysis, we identify the baseline interviews and throw out the rest. This will allow us an accurate assessment of the number of missing values that we exclude. 
+```{r}
+##Defining baseline interviews as first available interview
+df <- df %>% group_by(mergeid) %>% 
+  mutate(baseline = ifelse(wave == min(wave), 1, 0)) %>% ungroup()
+
+
+##perform exploratory data analysis only on the baseline interview for each
+##which we defined above as the first available interview
+df <- df %>% dplyr::filter(baseline == 1)
+
+```
+
+We have 140125 baseline interviews.
+
+Define outcome: cognitive score
+
+Next, the most important feature of our data is the outcome feature that represents cognitive impairment or dementia.
+
+EasySHARE does not record diagnosis of dementia (e.g. Alzheimer's disease) in all waves. In fact, We will create a composite cognitive score as a proxy for dementia severity, adapted from [Crimmins et al. (2011)](https://pubmed.ncbi.nlm.nih.gov/21743047/). The cognitive function indices are described in pg. 23 of the easySHARE data guide. Crimmins et. al defines a score using results from tests on orientation, recall, and numeracy. However, looking at the questions asked, we decided to drop numeracy as a metric because the questions are at a high enough difficulty to give trouble to those without cognitive impairment. As such we will use recall and orientation to define a cognitive score.
+
+The code to generate the cognitive score is adapter from Sara Wade's code.
+
+```{r cogindices, message = FALSE, fig.height=3, fig.width=9}
+##Exploring cognitive outcomes
+cogvars <- c("recall_1", "recall_2", "orienti")##numeracy removed
+cog = df[cogvars]
+p1 = ggplot() +
+  geom_histogram(aes(x=cog$recall_1), color="darkblue", fill="lightblue") +
+  labs(x ="Recall of words, first trial")
+p2 = ggplot() +
+  geom_histogram(aes(x=cog$recall_2), color="darkblue", fill="lightblue") +
+  labs(x ="Recall of words, second trial")
+p3 = ggplot() +
+  geom_histogram(aes(x=cog$orienti), color="darkblue", fill="lightblue") +
+  labs(x ="Orientation to date")
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+We now create a composite cognitive score, ranging from 0 (bad) to 24 (good), that combines the recall scores and orientation measure (sum of recall 1, recall 2, and orientation)
+
+```{r cogscore, message = FALSE, warning=FALSE, fig.height=2, fig.width=3}
+cogscore = rep(NA,nrow(df))
+ind = cog$recall_1 >= 0 & cog$recall_2 >= 0 & cog$orienti >= 0 
+cogscore[ind] = cog$recall_1[ind] + cog$recall_2[ind] + (cog$orienti[ind]) 
+df$cogscore = cogscore
+ggplot() +
+  geom_histogram(aes(x=df$cogscore[ind]), color="darkblue", fill="lightblue", binwidth =2 ) +
+  labs(x ="Composite cognitive score")
+
+```
+
+
+Lastly, we need to check missingness in our outcome variables. We cannot do anything with missing response variables, so these observations must be removed. Because we are focusing on a cross-sectional analysis, we will look purely at the cross-sectional cognitive score.
+
+```{r}
+##Plot missing counts in cogscore
+ggplot(df %>% dplyr::filter(is.na(cogscore)), aes(x = factor(cogscore)))+
+  geom_bar(stat = "count", 
+           color = "darkblue", fill = "lightblue") +
+  geom_text(stat='count', aes(label=..count..), size = 4, vjust=-0.2)+
+  ggtitle("Missing Cogscore Count")+
+  labs(x = "Missing Cogscore", y = "Count")+
+  theme(plot.title = element_text(hjust = -1))
+
+##dropping observations with missing cogscore
+df <- df %>% dplyr::filter(!is.na(cogscore))
+```
+24070 observations with missing cogscores were removed. This leaves us with 116055 remaining datapoints.
+
+We will also look at missingness in the other variables to see which need to be dropped. There are 10 types of missingness (see easySHARE guide for all types). Most can just be set to NA and then dropped; however, there are 3 types that are informative: -9 (not applicable filtered; ie for someone with no children, the question for children near the house would be -9), -12 (Don't Know/Refusal; could be missing not at random), and -15 (don't know; could be missing not at random). We will set all that are not -9, -12, or -15 to NA and drop observations with at least one NA value
+
+```{r}
+drop_missing <-c(-3, -7, -10, -11, -13, -14, -16)
+replace_NA <- function(df, missing_val){
+  ##Input:
+  ##df: dataframe to replace values
+  ##missing_val: value to replace with missing
+  
+  ##output:
+  ##df: df with missingness replaced as NA
+  
+  df[df == missing_val] <- NA
+  return(df)
+}
+
+##replace all non-informative missing values with NA
+for(i in drop_missing){
+  df <- replace_NA(df, i)
+}
+
+
+##Finding missing per wave
+find_missing <- function(df, missing_as_na = F){
+  ##Input:
+  ##df: data frame to check for missingness
+  ##missing_as_na: data initially structures missingness as a negative value,
+  ##               if we recode to NA we need to find in a different wave
+  
+  ##Output:
+  ##missingness: Long format data with missingness counts and percentages per variable/wave
+  
+  
+  ##check structure of missingness
+  if(missing_as_na == F){
+    missingness <- data.frame(df < 0) ##find if any are missing (missingness is negative in data structure)
+  }else{
+    missingness <- data.frame(is.na(df)) ##find if any are missing (missingness is negative in data structure)
+  }
+  
+  ##Create long format data with missinge counts and percentages per wave/variable
+  missingness <- missingness %>% dplyr::mutate(wave = df$wave) ##add the wave back
+  missingness <- missingness %>% group_by(wave) %>% summarise(across(everything(), list(sum))) ##row sums for each variable
+  missingness <- data.frame(missingness)
+  missingness <- pivot_longer(missingness, cols=colnames(missingness)[-1], 
+                            names_to = "Variable", values_to = "n_missing") ##turn to long format
+  count_wave <- df %>% group_by(wave) %>% summarise(count_wave = n()) ##count obs per wave
+  missingness <- merge(missingness, count_wave, by = "wave") ##add wave counts
+  missingness <- missingness %>% 
+    mutate(perc_missing = n_missing/count_wave) ##calculate missing percentage
+  
+  return(missingness)
+}
+
+missingness <- find_missing(df, missing_as_na = T)
+
+##Plot droppable missingness
+
+ggplot(missingness) +
+  geom_bar(aes(x = Variable, y = perc_missing), stat = "identity",
+           color = "darkblue", fill = "lightblue")+
+  ggtitle("Dropable Missingness Percentage per Wave")+
+  labs(y = "Percent Missing (Dropable Missingness)")+
+  facet_wrap(~wave)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, size = 5), 
+        plot.title = element_text(hjust = 0.5))
+
+  
+
+```
+
+We must note that including only baseline (and dropping missing cognitive scores) removed waves 3 and 7, which were SHARELife waves. Waves 6 and 8 are fully missing; waves 6 and 8 do not ask for drinking, so these observations can be dropped. Wave 1 is missing some casp (quality of life observations). After further inspection the casp missingness was due to -16, "no drop-off", which is an unclear definition, so it can be dropped. Wave 4 is missing a small number of bmi values, which were due to -3, "implausible value/suspected wrong". 22843 observations with non -9, -12, and -15 missingness were dropped, leaving 93212 observations.
+
+The counts of the -9, -12, and -15 missingness are shown below. 
+
+```{r}
+##drop missing values from above
+df <- df[complete.cases(df),]
+```
+
+
+
+```{r}
+##function to count the number of a specific type of missingness for an observation
+count_missing_observations <- function(df, missing_type){
+  ##Inpute:
+  ##df: input dataframe
+  ##missing_type: numerical type of missigness from easySHARE
+  
+  ##Output: Missingness counts and percentage summarized by wave
+  
+  ##Select observations with missingness
+  missing <- df %>%  
+    mutate(missing = rowSums(df == missing_type) > 0) ##Obs with at least one of missing type
+  
+  ##summarise data to get counts and percentages per wave
+  missing <- missing %>% group_by(wave) %>% 
+    summarize(count_missing = sum(missing),##Count >=1 not asked per wave
+              missing_type = missing_type,
+              wave_count = n(),
+              percent_missing = count_missing/wave_count) 
+  return(missing)
+  
+}
+
+##find each of the remaining missingness per wave
+missing_types <- c(-9, -12, -15)
+missingness_type <- do.call(rbind, 
+                           lapply(missing_types, count_missing_observations, df = df))
+missingness_type$missing_type <- factor(missingness_type$missing_type)
+levels(missingness_type$missing_type) <- c("No Info", "Don't Know/Refused", "Filtered")
+
+
+##merge counts per wave with missingness to get wave proportion
+
+ggplot(missingness_type)+
+  geom_bar(aes(x = missing_type, y = percent_missing), stat = "identity", 
+           color = "darkblue", fill = "lightblue")+
+    labs(x = "Missingness Type", y = "Percent Missing")+
+  facet_wrap(~wave)+
+  ggtitle("Percentage Observations with At Least One Missingness Type per Wave")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+
+```
+
+Note that after dropping all non-informative missing types, only waves 1, 2, 4, and 5 remain. Additionally, only types -12 and -15 remain. There are no -9 types.
+
+
+## Countries Excluded
+
+The literature heavily emphasizes the importance of external validation to assess a model's generalizability to unseen patient populations *[CITATIONS: Moons and Dekker] *. Geographic validation is an external validation method used to assess a model's performance on different instutions or countries. Given the easySHARE dataset is a combination of various centers across the world, we will employ geographic validation by randomly sampling a list of countries to include in the training set and leaving the remaining countries for testing. We will use 65% of the countries for the training set and 35% for the external validation set. This is performed in the BayesianRiskFactors_BNGraphResults.RMD file.
+
+
+We wish to split by country, so we'd like to explore any patterns related to country. In particular, we want to know how many observations are found per country
+```{r}
+##visualize country distribution/Counts
+ggplot(df, mapping = aes(x = factor(country)))+
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  # scale_x_continuous(breaks = (1:max(as.numeric(as.character(train$country)))))+
+  labs(x = "Country Code", y = "Count")+
+  ggtitle("Observations per Country")+
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(hjust = 0.5))
+
+
+
+
+```
+All countries have sufficient counts to be included.
+
+
+Next we must discretize our cogscores so that we can perform a completely connected discrete Bayesian Network. We will define score for "Severe", "Mild", and "No" cognitive impairment such that severe is 1.5 standard deviations below baseline mean and mild is 1-1.5 standard deviations below the mean.
+
+```{r}
+##Discretize cognitive impairment (must remove NA for outcome variable)
+mean_cogscore <- mean(df$cogscore, na.rm = T)
+sd_cogscore <- sd(df$cogscore, na.rm = T)
+cogscore_severe <- mean_cogscore - 1.5*sd_cogscore
+cogscore_mild <- mean_cogscore - sd_cogscore
+
+
+##define bins for cogscores at severe, mild, and highest value (+1 to avoid NA values)
+cogscore_breaks <- c(0, cogscore_severe, 
+                     cogscore_mild, max(df$cogscore, na.rm = T) +1)
+
+##cogscore levels
+cogscore_levels <- c("Severe", "Mild", "Unimpaired")
+
+##create discretized cogscore
+df <- df %>% mutate(cogscore_bin = factor(cut(cogscore, breaks = cogscore_breaks,
+                                              right = F), labels = cogscore_levels))
+```
+
+
+Dementia is typically separated into two categories: 1) "Senile" Dementia (Age 65 or older) and 2) Early Onset Dementia (EOD; younger than 65). This age cutoff is arbitrary, and the causes and symptoms are similar in the EOD group as in the older group **(Lambert et. al)**. We explore the distribution below. Overall, individuals in our data are mostly older as seen by the right skew in the histogram below; however, there are still quite a few observations between the ages of 50 and 65.
+
+```{r EOD}
+##Plot Age distribution
+ggplot(df)+
+  geom_histogram(aes(x = age), color = "darkblue", fill = "lightblue",
+                 binwidth = 2)+
+  geom_vline(aes(xintercept = 65, color = "EOD_Cutoff"))+
+  ggtitle("Age Counts for Baseline Interviews")+
+  scale_x_continuous(breaks = seq(-20, max(df$age), by = 10))+
+  scale_color_manual(name = "Legend", values = c(EOD_Cutoff = "firebrick"))+
+  labs(y = "Counts", x = "Age")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+Because the cutoff of 65 is arbitrary and we have a high frequency of observations between 50 and 65 years of age, we will not treat those between the ages of 50 and 65 any different from those above (and we will not filter them off). 
+
+We have two types of informative missingness in our remaining observations -15: No Info, and -12: Don't Know/Refusal. Due to low counts for -12, we will combine with -15 to make 1 bin: No Info/Don't Know/Refusal. We due this for all variables except the outcome and income (income is imputed by the authors of easySHARE, so there is no missingness)
+```{r}
+##Combining -15 and -12 missingness for all variables except income
+##observations not shown here
+notcombine_miss_vars <- c("thinc_m", "cogscore", "cogscore_bin")
+notcombine_ind <- which(colnames(df) %in% notcombine_miss_vars)
+
+##For all not depression or income, replace -12 with -15 to combine
+df[-notcombine_ind] <-  data.frame(lapply(df[-notcombine_ind], function(x){
+  ifelse(x == -12, -15, x)
+}))
+```
+
+Discretization and binning
+```{r}
+##Here we discretize all data and put into levels that make sense
+##country
+
+country_levels <- c("Austria", "Germany", "Sweden", "Netherlands",
+                    "Spain", "Italy", "France", "Denmark", "Greece",
+                    "Switzerland", "Belgium", "Israel", "Czech Republic",
+                    "Poland", "Ireland", "Luxembourg", "Hungary", "Portugal",
+                    "Slovenia", "Estonia")
+##sex
+female_levels <- c("Male", "Female")
+
+##age
+##discretize age
+##give bins to missing value (only type is -15), 0-50, and then every 5 years
+##until 95 and then 95 to max
+max_age_break <- max(df$age)%/%5 * 5 + 5 ##finds nearest 5 value above max
+age_breaks <- c(-15, 0, seq(50, 95, by = 5), max_age_break)
+
+##education 
+##combining "In School/Other" because of low observation counts (not shown here)
+##In school is 95 and other is 97; labeling both as 95
+df <- df %>% 
+  dplyr::mutate(isced1997_r = ifelse(isced1997_r %in% c(95,97), 95, isced1997_r))
+
+##changing to factors
+edu1_levels <- c("No Info/Don't Know/Refused", "No Education",
+                "Primary", "Lower Secondary", 
+                "Upper Secondary ", "Post-secondary Non-tertiary",
+                "First State Tertiary", "Second State Tertiary", "In School/Other")
+
+
+##physical health levels
+sphus_levels <- c("No Info/Don't Know/\nRefused", 
+                  "excellent", "very good", "good", "fair", "poor")
+bmi_levels <- c("No Info/Don't Know/\nRefused", "Underweight", 
+                "Healthy", "Overweight", "Obese")
+##well-defined BMI breaks 
+bmi_breaks <- c(-15, 0, 18.5, 25, 30, max(df$bmi)+1) ##definition of bmi health ranges
+
+##smoking
+smoke_levels <- c("No Info/Don't Know/\nRefused", 
+                  "Yes", "No")
+
+##drinking
+drink_levels <- c("No Info/Don't Know/\nRefused",  
+                  "Not at all", "<1 times\nper month", 
+                  "1-2 times\nper month", "1-2 days\nper week",
+                  "3-4 days\nper week", "5-6 days\nper week",
+                  "Almost daily")
+
+##depression
+##casp from 12-48, so breaking by 4
+casp_breaks <- c(-15, seq(12, max(df$casp) + 4, by = 4))
+
+##Social Contact (hhsize and marital status)
+
+mar_levels <- c("No Info/Don't Know/Refused", 
+                 "Married/with Spouse", "Partnership",
+                 "Married\nwithout Spouse", "Never Married",
+                 "Divorced", "Widowed")
+
+##physical activity levels
+br015_levels <- c("No Info/Don't Know/Refused",
+                  ">1 per Week", "1 per week", 
+                  "1-3 per month", "Rare/Never")
+
+
+
+##Variables of interest
+df <- df %>% 
+  dplyr::mutate(country = factor(country, label = country_levels),
+                female = factor(female, labels = female_levels), ##sex
+                age_bin = factor((cut(age, breaks = age_breaks,
+                                                 right = F))), ##age_discretized
+                isced1997_r = factor(isced1997_r, labels = edu1_levels), ##education
+                sphus = factor(sphus, labels = sphus_levels), ##phys health
+                bmi_bin = factor(cut(bmi, breaks = bmi_breaks,
+                                     right = F), labels = bmi_levels), ##bmi
+                smoking = factor(smoking, labels = smoke_levels), ##current smoking
+                ever_smoked = factor(ever_smoked, labels = smoke_levels), ##daily smoking
+                br010_mod = factor(br010_mod, labels = drink_levels), ##drinking
+                casp_bin = factor(cut(casp, breaks = casp_breaks,##quality of life
+                                             right = F)), ##left inclusive not right
+                eurod = as.factor(eurod), ##depression
+                hhsize_bin = as.factor(hhsize), ##hhsize (1-14)
+                mar_stat = factor(mar_stat, labels = mar_levels), ##Marital status
+                br015_bin = factor(br015_, labels = br015_levels)) ##physical activity
+
+
+##rename numerical missing value (-15) to show missingness type
+levels(df$casp_bin)[1] <- "No Info/Don't Know/Refused"
+levels(df$eurod)[1] <- "No Info/Don't Know/Refused"
+levels(df$age_bin)[1] <- "No Info/Don't Know/Refused"
+
+##place missing info at the end
+df$eurod <- factor(df$eurod, levels = c(as.character(seq(0,12,1)),
+                                        "No Info/Don't Know/Refused"))
+df$casp_bin <- factor(df$casp_bin, levels = sort(levels(df$casp_bin)))
+df$age_bin <- factor(df$age_bin, levels = sort(levels(df$age_bin)))
+
+```
+
+
+
+```{r}
+##Additional Variables for Income
+##income has a few very large outliers, so we are going to do 150,000 and above in one bin
+##values can be negative, rounding minimum to the nearest 10000
+
+##normalize income by household size
+df<- df %>% dplyr::mutate(thinc_m_norm = thinc_m/hhsize)
+
+##define bins and discretize
+inc_breaks <- c(seq(-10000,300000, by = 1e4), seq(4e5, 1e6, 1e5), max(df$thinc_m) + 1)
+inc_norm_breaks <- c(seq(-10000, 150000, by = 1e4), max(df$thinc_m_norm) + 1)
+df <- df %>%
+  dplyr::mutate(thinc_m_bin  = factor(cut(thinc_m,
+                                          breaks = inc_breaks,
+                                          right = F)),
+                thinc_norm_bin = factor(cut(thinc_m_norm,
+                                            breaks = inc_norm_breaks,
+                                            right = F))
+                )
+
+##Plot distribution
+##total income in a house
+ggplot(df, aes(x = thinc_m_bin)) + geom_bar(color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-1)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+##plotting normalized income per person in a house
+ggplot(df, aes(x = thinc_norm_bin)) + geom_bar(color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-1)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+
+```{r}
+##need a function to calculate and plot the relative proportion of 
+##cases per group for all types of dementia
+
+dim_proportion <- function(df, x, cogvar, title, xlab, ylab, angle = 45, facet_var = NULL){
+  ##Input: 
+  ##df: data to calculate
+  ##x: grouping variable (not cognitive status)
+  ##cogvar: cognitivce score used
+  ##title: plot title
+  ##xlab: x label
+  ##ylab: y label
+  ##angle: angle of the x-axis labels
+  ##facet_var: additional variable to facet by if we wish to break up the data more
+  
+  ##Output:
+  ##graph of relative proportions of cases per group
+  ##stratified by cognitive status
+  
+  ##Create Data
+  if(is.null(facet_var)){ ##check if we want to facet by another variable
+    x_quo <- enquo(x); cogvar_quo <- enquo(cogvar)
+    df <- df %>% group_by(!!x_quo, !!cogvar_quo) %>%
+      summarise(count = n()) %>% ungroup() ##count per cogscore/var group
+    df <- df %>% group_by(!!cogvar_quo) %>%
+      mutate(proportion = count/sum(count)) ##proportion per cogscore
+    
+    ##Plot Data
+    plot <- ggplot(df)+
+    geom_bar(aes_string(x = quo_name(x_quo), y="proportion"), stat = "identity",
+             color = "darkblue", fill = "lightblue", position ="dodge")+
+    facet_wrap(quo_name(cogvar_quo))+
+    ggtitle(title)+
+    labs(x = xlab, y = ylab)+
+    theme_bw()+
+    theme(axis.text.x = element_text(angle = angle, hjust = 1),
+          plot.title = element_text(hjust = 0.5))
+  }else{##If faceting by another variable calculate proportions differently
+    x_quo <- enquo(x); cogvar_quo <- enquo(cogvar); facet_quo <- quo(!! sym(facet_var))
+    df <- df %>% group_by(!!x_quo, !!cogvar_quo, !!facet_quo) %>%
+      summarise(count = n()) %>% ungroup() ##count per cogscore/var/facet group
+    df <- df %>% group_by(!!cogvar_quo, !!facet_quo) %>%
+      mutate(count_subgroup = sum(count), ##count per cogscore/facet group
+             proportion = count/count_subgroup) ##proportion per cogscore/facet group
+    
+    ##Plot Data
+    plot <- ggplot(df)+
+    geom_bar(aes_string(x = quo_name(x_quo), y="proportion"), stat = "identity",
+             color = "darkblue", fill = "lightblue", position ="dodge")+
+    facet_grid(c(quo_name(cogvar_quo), quo_name(facet_quo)))+
+    ggtitle(title)+
+    labs(x = xlab, y = ylab)+
+    theme_bw()+
+    theme(axis.text.x = element_text(angle = angle, hjust = 1),
+          plot.title = element_text(hjust = 0.5))
+  }
+  
+  
+  return(plot)
+}
+```
+
+Exploratory data analysis comparing cognitive score (impairment) with all variables
+
+Exploratory Analysis Country
+```{r}
+##exploratory data analysis on well-documented variables
+
+##country
+country <- ggplot(df) +
+  geom_boxplot(aes(x = country, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Country",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+country_c <- ggplot(df, aes(x = country)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Country")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+grid.arrange(country, country_c, nrow = 1)
+
+##discretized age
+##Find relative proportion of observations with cog outcome per group
+##function defined above
+
+dim_proportion(df, country, cogscore_bin,
+               xlab = "Country", ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Country per Cognitive Group", 
+               angle = 90)
+
+ggplot(df, aes(x = country)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Country")+
+  facet_wrap(~cogscore_bin)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+Exploratory Analysis Sex
+```{r}
+#female
+
+fem <- ggplot(df) +
+  geom_boxplot(aes(x = female, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Female",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+fem_c <- ggplot(df, aes(x = female)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Female")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(fem, fem_c, nrow = 1)
+
+##discretized female
+##Find relative proportion of observations with cog outcome per group
+##function defined above
+
+dim_proportion(df, female, cogscore_bin,
+               xlab = "Female", ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Female per Cognitive Group")
+
+ggplot(df, aes(x = female)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Female")+
+  facet_wrap(~cogscore_bin)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Exploratory Analysis Age
+```{r}
+##age
+age <- ggplot(df) +
+  geom_boxplot(aes(x = age_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Age",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+age_c <- ggplot(df, aes(x = age_bin)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Age")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(age, age_c, nrow = 1)
+
+##discretized age
+##Find relative proportion of observations with cog outcome per group
+##function defined above
+
+dim_proportion(df, age_bin, cogscore_bin,
+               xlab = "Age", ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Age per Cognitive Group", 
+               angle = 45)
+
+# ggsave("age_exploratory_data.png")
+
+ggplot(df, aes(x = age_bin)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Age")+
+  facet_wrap(~cogscore_bin)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+```
+
+Exploratory Analysis Education
+```{r}
+##education
+ed1 <- ggplot(df) +
+  geom_boxplot(aes(x = isced1997_r, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Education Level (ISCED Classification)",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+##Excluded from data
+# ed2 <- ggplot(df) +
+#   geom_boxplot(aes(x = eduyears_mod_bin, y = cogscore),
+#                color = "darkblue", fill = "lightblue")+
+#   labs(x = "Education Years (Discretized)",
+#        y = "Cognition Score")+
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+##counts for ed categories
+ed1_c <- ggplot(df, aes(x = isced1997_r)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Education Level (ISCED Classification)")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+##Excluded from data
+# ed2_c <- ggplot(df, aes(x = eduyears_mod_bin)) +
+#   geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+#   geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+#   labs(x = "Education Years (Discretized)")+
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(ed1, ed1_c, nrow = 2)
+
+
+##relative proportion per cognitive group
+dim_proportion(df, isced1997_r, cogscore_bin, 
+               xlab = "Education Level (ISCED Classification)",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Education per Cognitive Group")
+
+
+```
+
+Exploratory Analysis Health
+```{r}
+
+##Physical Health
+phys1 <- ggplot(df) +
+  geom_boxplot(aes(x = sphus, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Self-Perceived Physical Health (US)",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+##BMI
+phys5 <- ggplot(df) +
+  geom_boxplot(aes(x = bmi_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "BMI",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(phys1, phys5, nrow = 3)
+
+##counts for phys categories
+phys1_c <- ggplot(df, aes(x = sphus)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Self-Perceived Physical Health (US)")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+phys5_c <- ggplot(df, aes(x = bmi_bin)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "BMI")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(phys1, phys1_c, phys5, phys5_c, nrow = 2)
+
+##relative proportion per cognitive group
+h1 <- dim_proportion(df, sphus, cogscore_bin, 
+               xlab = "Self-Perceived Physical Health (US)",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Health per Cognitive Group")
+
+
+h5 <- dim_proportion(df, bmi_bin, cogscore_bin, 
+               xlab = "BMI",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of BMI per Cognitive Group")
+
+grid.arrange(h1, h5, nrow = 2)
+
+
+```
+Exploratory Analysis Smoking
+```{r}
+##smoking
+
+smoke1 <- ggplot(df) +
+  geom_boxplot(aes(x = smoking, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Currently Smoking",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+smoke2 <- ggplot(df) +
+  geom_boxplot(aes(x = ever_smoked, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Ever Smoked Daily",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(smoke1, smoke2, nrow = 1)
+
+##counts for smoke categories
+smoke1_c <- ggplot(df, aes(x = smoking)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Currently Smoking")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+smoke2_c <- ggplot(df, aes(x = ever_smoked)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Ever Smoked Daily")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(smoke1, smoke1_c, smoke2, smoke2_c, nrow = 2)
+
+##relative proportion per cognitive group
+s1 <- dim_proportion(df, ever_smoked, cogscore_bin, 
+               xlab = "Ever Smoked Daily",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Ever Smoked per Cognitive Group")
+
+##breaking up smoking by age < 60 and age >= 65
+s2 <- dim_proportion(df, smoking, cogscore_bin, 
+               xlab = "Currently Smoking",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Smoking per Cognitive Group")
+
+grid.arrange(s1, s2, nrow = 2)
+
+
+##smoking broken up by Seniority status
+dim_proportion(df %>% dplyr::mutate(Senior = factor(ifelse(age >= 65, T, F),
+                                                    labels = c("Not Senior", "Senior"))), 
+               ever_smoked, cogscore_bin, 
+               xlab = "Ever Smoked Daily",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Age per Cognitive Group",
+               facet_var = "Senior")
+
+
+
+
+```
+
+Exploratory Analysis Drinking
+```{r}
+
+##Drinking
+
+drink <- ggplot(df) +
+  geom_boxplot(aes(x = br010_mod, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Frequency of Drinking in Past Three\nMonths (Six for Wave 1)",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+##counts for drink categories
+drink_c <- ggplot(df, aes(x = br010_mod)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Frequency of Drinking in Past Three\nMonths (Six for Wave 1)")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(drink, drink_c, nrow = 1)
+
+##relative proportion per cognitive group
+dim_proportion(df, br010_mod, cogscore_bin, 
+               xlab = "Drinks in Past Months",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Drinks per Cognitive Group",
+               angle = 90)
+
+```
+Exploratory Analysis Depression and Quality of Life
+```{r}
+##Depression
+depr1 <- ggplot(df) +
+  geom_boxplot(aes(x = casp_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Quality of Life Assessment (CASP)",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+depr2 <- ggplot(df) +
+  geom_boxplot(aes(x = eurod, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Current Depression Level (Euro-D)",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(depr1, depr2, nrow = 1)
+
+##counts for depression categories
+depr1_c <- ggplot(df, aes(x = casp_bin)) +
+  geom_bar(stat = "count",color = "darkblue", fill = "lightblue")+ 
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Quality of Life Assessment (CASP)")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+depr2_c <- ggplot(df, aes(x = eurod)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Current Depression Level (Euro-D)")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(depr1, depr1_c, depr2, depr2_c, nrow = 2)
+
+##relative proportion per cognitive group
+d1 <- dim_proportion(df, casp_bin, cogscore_bin, 
+               xlab = "Quality of Life Assessment (CASP)",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of CASP per Cognitive Group",
+               angle = 45)
+
+##relative proportion per cognitive group
+d2 <- dim_proportion(df, eurod, cogscore_bin, 
+               xlab = "Current Depression Level (Euro-D)",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Depression per Cognitive Group",
+               angle = 45)
+
+d1
+ggsave( "Casp_Exploratory_data.png")
+d2
+ggsave("depression_exploratory_data.png")
+```
+
+Exploratory Analysis Social Contact
+```{r}
+##Social Contact (marital status)
+
+soc1 <-  ggplot(df) +
+  geom_boxplot(aes(x = mar_stat, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Marital Status",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+soc1_d <- ggplot(df, aes(x = mar_stat)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Marital Status")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(soc1, soc1_d, nrow = 2)
+
+##Household size
+soc2 <-  ggplot(df) +
+  geom_boxplot(aes(x = hhsize_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Household Size",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+soc2_d <- ggplot(df, aes(x = hhsize_bin)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Household Size")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+soc3 <-  ggplot(df) +
+  geom_boxplot(aes(x = br015_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Physical Activity",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+##discretized cogscores
+ dim_proportion(df, mar_stat, cogscore_bin, 
+               xlab = "Marital Status",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Marital Status per Cognitive Group")
+ 
+dim_proportion(df, hhsize_bin, cogscore_bin, 
+               xlab = "Household Size",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Household Size per Cognitive Group")
+
+
+```
+
+Exploratory Analysis Physical Activity
+```{r}
+##physical activity
+phys_act <- ggplot(df, aes(x = br015_bin)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Physical Activity")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+phys_act
+
+##Discretized cogscores
+dim_proportion(df, br015_bin, cogscore_bin, 
+               xlab = "Physical Activity",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Physical Activity per Cognitive Group")
+```
+Exploratory Analysis Income
+```{r}
+##Income
+
+inc1 <- ggplot(df) +
+  geom_boxplot(aes(x = thinc_norm_bin, y = cogscore),
+               color = "darkblue", fill = "lightblue")+
+  labs(x = "Normalized Income",
+       y = "Cognition Score")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+inc1_c <- ggplot(df, aes(x = thinc_norm_bin)) +
+  geom_bar(stat = "count", color = "darkblue", fill = "lightblue")+
+  geom_text(stat='count', aes(label=..count..), size = 2, vjust=-0.2)+
+  labs(x = "Normalized Income")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(inc1, inc1_c, nrow = 1)
+
+
+##discretized cogscoeres
+dim_proportion(df, thinc_norm_bin, cogscore_bin, 
+               xlab = "Normalized Income",
+               ylab = "Relative Proportion per Group",
+               title = "Relative Proportion of Normalized Income per Cognitive Group")
+
+```
+
+Data Generation: Final Design Matrix
+
+```{r}
+##Final Design Matrix
+
+study1.y <- c("cogscore_bin")
+study1.x <- c("country",
+              "female", "age_bin", ##demographic sex and age
+              "isced1997_r", ##education
+              "sphus", "bmi_bin", ##phys health
+              "br015_bin", ##physical activity
+              "smoking", "ever_smoked", ##smoking
+              "br010_mod", ##drinking
+              "casp_bin", "eurod", ##mental health
+              "hhsize_bin", "mar_stat",##social network"
+              "thinc_norm_bin") 
+
+study1.vars <- c(study1.y, study1.x)
+train <- df[,study1.vars]
+str(train)
+
+##write crosssectional training matrix to csv
+write.csv(train, "./cross_sec1_data.csv", row.names = F)
+```
+
+

@@ -1,0 +1,665 @@
+---
+output: 
+  bookdown::pdf_document2
+bibliography: Dementia_Dissertation_Ref.bib
+toc: false
+number_sections: true
+
+documentclass: article
+classoption:
+  - twoside
+  - 11pt
+fontsize: 11pt
+header-includes:
+- \usepackage{geometry}
+- \usepackage{subcaption}
+- \usepackage{sectsty}
+- \usepackage[labelfont=bf]{caption}
+- \usepackage{enumerate}
+- \usepackage{float}
+- \usepackage{latexsym,booktabs}
+- \usepackage{amsmath,amssymb}
+- \usepackage{graphicx}
+- \usepackage{hyperref}
+- \usepackage[singlespacing]{setspace}
+- \usepackage{calc}
+- \geometry{a4paper,left=2cm,right=2.0cm, top=2cm, bottom=2.0cm}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable} 
+- \usepackage{threeparttablex} 
+- \usepackage[normalem]{ulem} 
+- \usepackage{makecell}
+- \usepackage{xcolor}
+- \newtheorem{Definition}{Definition}
+- \newtheorem{Theorem}{Theorem}
+- \newtheorem{Lemma}{Lemma}
+- \newtheorem{Corollary}{Corollary}
+- \newtheorem{Proposition}{Proposition}
+- \newtheorem{Algorithm}{Algorithm}
+- \numberwithin{Theorem}{section}
+- \numberwithin{Definition}{section}
+- \numberwithin{Lemma}{section}
+- \numberwithin{Algorithm}{section}
+- \numberwithin{equation}{section}
+- \newcommand{\dottedline}[1]{\makebox[#1]{.\dotfill}}
+- \renewcommand{\thesubfigure}{\Alph{subfigure}}
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE)
+print.all.code=FALSE
+#Setting this TRUE will include all code chunks in the PDF
+```
+
+```{=latex}
+%setup latex for later
+\captionsetup{belowskip=0pt} %setup caption spacing
+%subsubsection labeling
+\subsubsectionfont{\normalfont\bfseries\itshape}
+\paragraphfont{\normalfont\bfseries\itshape}
+```
+```{=latex}
+\pagestyle{empty}
+
+% =============================================================================
+% Title page
+% =============================================================================
+\begin{titlepage}
+\vspace*{.5em}
+\center
+\textbf{\Large{The School of Mathematics}} \\
+\vspace*{1em}
+\begin{figure} 
+\centering
+\includegraphics[width=180pt]{CentredLogoCMYK.jpg}
+\end{figure}
+\vspace{2em}
+\textbf{\Huge{Identifying Risk Factors for Dementia (Cognitive Impairment) using a Bayesian Network Approach}}\\[2em]
+\textbf{\LARGE{by}}\\
+\vspace{2em}
+\textbf{\LARGE{Jonathan Hoover}}\\
+\vspace{6.5em}
+\Large{Dissertation Presented for the Degree of\\
+MSc in Statistics with Data Science}\\
+\vspace{6.5em}
+\Large{July 2021}\\
+\vspace{3em}
+\Large{Supervised by\\Dr. Sara Wade and Dr. Cecilia Balocchi}
+\vfill
+\end{titlepage}
+
+\cleardoublepage
+
+% =============================================================================
+% Executive summary, acknowledgments, and own work declaration
+% =============================================================================
+\textbf{\Large{Executive Summary}}
+\newline
+
+\textbf{1. Introduction} 
+
+
+Dementia cases increase every year due to aging populations \cite{alzheimer}. There is a critical need to prepare health systems for this increased burden. A potential solution is to identify preventable risk factors to target disease prior to onset. We use Bayesian networks, a class of graphical models that express dependence relationships between variables, to identify risk factors for cognitive impairment (our proxy for dementia) and suggest potential avenues for future study.
+\newline
+
+\textbf{2. Data Source} 
+
+
+The data in this analysis comes from the easySHARE release 8.0.0 \cite{easyshare}. The data contains information on age, sex, education, smoking, drinking, depression, social contact, BMI, and physical activity, which are known risk factors for dementia  \cite{age_sex} \cite{livingston}. The data does not include dementia status but includes recall and orientation measurements which serve as proxies for cognition. 
+\newline
+
+\textbf{3. Methods} 
+
+
+We perform a cross-sectional study on baseline interviews from the easySHARE data. Following variable selection and feature engineering we produce a dataset with 14 risk factors. We then define a proxy for dementia from recall and orientation, called cognitive impairment, that splits cognition into severe, mild, and unimpaired groups.
+
+To learn the structure of our network, we define a unique hybrid structure-learning approach that emphasizes learning connections between risk factors and cognitive impairment. We then design a two-phase, prediction-based validation strategy to validate both the learning phase and the generalizability of our results. Additionally, we create a classification score for validation that emphasizes learning relationships between risk factors and impairment. This score was used to select the final networks. 
+\newline
+
+\textbf{4. Results and Conclusions} 
+
+
+We found two nearly equivalent Bayesian networks that identified age, sex, education, depression, and quality of life (or drinking in one of the networks) as direct risk factors (not necessarily causal) for cognitive impairment. Additionally, we identified interaction pathways between each risk factor in our data (except BMI) that led to cognitive impairment. The data emphasized the utility of Bayesian networks for identifying potential intervention points for cognitive impairment, but future studies are required for causality. 
+
+Lastly, external validation suggested that we cannot generalize to countries outside of those included in the training data. Future studies should focus on individual countries or regional analyses to identify risk factors specific to each region.
+
+\clearpage
+
+
+\textbf{\Large{Acknowledgments}}
+\newline
+\newline
+
+I am grateful to the supervisors of the project, Dr. Sara Wade and Dr. Cecilia Balocchi, for their guidance. I'd also like to thank the project experts, Dr. Graciela Muniz-Terrara and Dr. Anja Leist for their expertise and advice.
+\newline
+
+This paper uses data from SHARE Waves 1, 2, 3, 4, 5, 6, 7, 8 and 9 (DOIs: 10.6103/SHARE.w1.800,  10.6103/SHARE.w2.800, 10.6103/SHARE.w3.800, 10.6103/SHARE.w4.800, 10.6103/SHARE.w5.800, 10.6103/SHARE.w6.800, 10.6103/SHARE.w7.800, 10.6103/SHARE.w8.800, 10.6103/SHARE.w8ca.800, 10.6103/SHARE.w9ca800), see Börsch-Supan et al. (2013) for methodological details \cite{wave4_met}. 
+
+The SHARE data collection has been funded by the European Commission, DG RTD through FP5 (QLK6-CT-2001-00360), FP6 (SHARE-I3: RII-CT-2006-062193, COMPARE: CIT5-CT-2005-028857, SHARELIFE: CIT4-CT-2006-028812), FP7 (SHARE-PREP: GA N°211909, SHARE-LEAP: GA N°227822, SHARE M4: GA N°261982, DASISH: GA N°283646) and Horizon 2020 (SHARE-DEV3: GA N°676536, SHARE-COHESION: GA N°870628, SERISS: GA N°654221, SSHOC: GA N°823782, SHARE-COVID19: GA N°101015924) and by DG Employment, Social Affairs \& Inclusion through VS 2015/0195, VS 2016/0135, VS 2018/0285, VS 2019/0332, and VS 2020/0313. Additional funding from the German Ministry of Education and Research, the Max Planck Society for the Advancement of Science, the U.S. National Institute on Aging (U01\_AG09740-13S2, P01\_AG005842, P01\_AG08291, P30\_AG12815, R21\_AG025169, Y1-AG-4553-01, IAG\_BSR06-11, OGHA\_04-064, HHSN271201300071C, RAG052527A) and from various national funding sources is gratefully acknowledged (see www.share-project.org).
+
+This paper uses data from the generated easySHARE data set (DOI: 10.6103/SHARE.easy.800), see Gruber et al. \cite{easyshare} for methodological details. The easySHARE release 8.0.0 is based on SHARE Waves 1, 2, 3, 4, 5, 6, 7 and 8 (DOIs: 10.6103/SHARE.w1.800, 10.6103/SHARE.w2.800, 10.6103/SHARE.w3.800, 10.6103/SHARE.w4.800, 10.6103/SHARE.w5.800, 10.6103/SHARE.w6.800, 10.6103/SHARE.w7.800, 10.6103/SHARE.w8.800).
+
+
+
+\clearpage
+
+
+\textbf{\Large{University of Edinburgh – Own Work Declaration}}
+\newline
+
+
+% Replace the commands \dottedline{8cm}, %\dottedline{6cm}, etc. with you name, Matriculation 
+% Number, etc.
+\vspace{1cm}
+
+Name: Jonathan Hoover
+
+Matriculation Number: s2113204
+
+Title of work: Identifying Risk Factors for Dementia (Cognitive Impairment) using a Bayesian Network Approach
+
+\vspace{1cm}
+
+I confirm that all this work is my own except where indicated, and that I have:
+\begin{itemize}
+\item   Clearly referenced/listed all sources as appropriate                    
+\item   Referenced and put in quotes for all quoted text (from books, web, etc)    
+\item   Given the sources of all pictures, data etc. that are not my own                
+\item   Not made any use of the report(s) or essay(s) of any other student(s) either past   
+or present  
+\item   Not sought or used the help of any external professional academic agencies for the work
+\item   Acknowledged in appropriate places any help that I have received from others    (e.g. fellow students, technicians, statisticians, external sources)
+\item   Complied with any other plagiarism criteria specified in the Course handbook
+\end{itemize}
+
+I understand that any false claim for this work will be penalised in accordance with
+the University regulations  (\url{https://teaching.maths.ed.ac.uk/main/msc-students/msc-programmes/statistics/data-science/assessment/academic-misconduct}).                                
+
+\vspace{1cm}
+
+Signature: \newline
+Jonathan Hoover \newline
+\includegraphics[width=180pt]{jrh_signature.png}
+
+%Include your signature as an image with the
+%\includegraphics command 
+%(see an example later in the document)
+
+\vspace{5mm}
+
+Date: July 1, 2022
+
+
+\clearpage
+
+
+
+% =============================================================================
+% Table of contents, tables, and pictures (if applicable)
+% =============================================================================
+\pagestyle{plain}
+\setcounter{page}{1}
+\pagenumbering{Roman}
+\tableofcontents
+\clearpage
+\listoftables
+\listoffigures
+\cleardoublepage
+
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\nocite{*}
+%\bibliographystyle{abbrv}
+\bibliographystyle{ieeetr}
+\clearpage
+```
+```{=latex}
+\section{Introduction}
+\label{sec:intro}
+
+Dementia is a condition defined by impaired memory, cognition, behavior, and emotional regulation that leads to a loss of autonomy \cite{alzheimer}. As the world’s population ages, the population living with dementia also rises; as of 2021, over 55 million people were living with dementia and by 2030 the estimated number is over 78 million \cite{alzheimer}. With an aging population, there is a critical need to prepare health systems for the increased economic and health burden that comes with more dementia cases. As there are few treatments for dementia, one way to ease the burden is to identify preventable risk factors that can be targeted prior to disease onset.
+
+Recent studies have identified 12 potentially modifiable risk factors: Education, hearing loss, traumatic brain injury, hypertension, alcohol consumption, obesity, smoking, depression, social isolation, physical inactivity, air pollution, and diabetes \cite{livingston}. Each factor may have a direct association with dementia, but evidence suggests there are likely complex interactions at play between the variables \cite{interactions}. Traditional analyses, like regression, can study interaction through interaction terms. However, these methods fail to elicit the probability dependence structures (or pathways) needed to understand the complex relationships between risk factors and dementia. These structures are critical for identifying potential intervention points. Fortunately, Bayesian networks, a graphical class of models with nodes and edges expressing direct dependence relationships, are ideally suited to identifying interactions in complex systems like dementia \cite{scutari_review}. 
+
+In this report, we use Bayesian networks and the open-source clinical dataset easySHARE \cite{easyshare} to learn the probability relationships between cognitive impairment (our proxy metric for dementia), unmodifiable risk factors, and modifiable risk factors. The final list of factors is age, sex, education, physical health, physical activity, current smoking status, daily smoking status, BMI, recent drinking history, quality of life, depression, household size, marital status, and income. These were chosen to cover 7 of the 12 modifiable risk factors presented in \cite{livingston}, along with known demographic risk factors (age and education) \cite{age_sex} and a potential confounder (income \cite{alzheimer}). 
+
+The structure of the report is as follows. First, we define our data and the data manipulation methods used to create our final dataset. Next, we explain Bayesian networks and the methods used to identify the structure of our network. Then we explain our model validation strategy, including both an internal strategy to validate the learning phase and an external strategy to assess generalizability. Lastly, we present our final network, analyze the relationship between the risk factors and cognitive impairment, and suggest potential avenues for future study and intervention.
+```
+```{=latex}
+\section{Data Source}
+\label{sec:data}
+
+The data in this analysis comes from the easySHARE release 8.0.0 \cite{easyshare}, which is a simplified dataset of the more complex SHARE 8.0.0 \cite{share} \cite{wave1}\cite{wave1_met}\cite{wave2}\cite{wave2_met}\cite{wave4}\cite{wave4_met}\cite{wave5}\cite{wave5_met}. release. easySHARE includes the same number of observations as the SHARE dataset, but with a restricted set of variables.
+
+SHARE is a cross-national, interdisciplinary database containing information from interviews in 29 countries in survey waves spanning from 2004 to 2020. The study population is non-incarcerated people of relatively good health (not hospitalized) who live in (and speak the language of) one of the 29 countries included.
+
+easySHARE itself is intended primarily for training and teaching purposes. While this limitation must be noted, the data contains variables with information spanning demography, household composition, social networks and support, childhood conditions, health and health behavior, functional limitation indices, and work and money.  These variables cover at least 7 of the 12 modifiable risk factors for dementia presented in \cite{livingston}, so the data is sufficient for risk factor analysis.
+```
+```{=latex}
+\section{Methods}
+\label{sec:methods}
+
+\subsection{Cross-Sectional Study Design}
+\label{sec:cross_sec}
+
+We performed a cross-sectional analysis to identify dementia risk factors for individuals in the study population. We subset only baseline interviews to prevent any bias resulting from repeat interviews. Baseline interviews were found by selecting the first wave available for any given participant. There are 140,125 baseline interviews. All further analysis was done only on baseline interviews.
+
+\subsection{Variable Selection, Missing Value Processing, and Feature Engineering}
+\label{sec:feature_eng}
+
+\subsubsection{Response Variable Creation}
+\label{sec:response_var}
+
+Neither SHARE nor easySHARE contain a dementia diagnosis. Fortunately, the dataset contains recall, orientation, and numeracy measurements, which capture memory and cognition. We use this data to create a cognitive score as a proxy for the cognitive component of dementia based on the work in \cite{crimmins}.
+
+The score takes the sum of immediate recall (0-10), delayed recall (0-10), and orientation (0-4), so the cognitive score ranges from 0-24. Higher scores signify better cognition. We did not include numeracy because the questions were deemed too difficult for assessing impairment \cite{wave1_met}. Please note the code to generate cognitive score was provided by Sara Wade. We adapted it to remove numeracy.
+
+We also note that this cognitive score purely measures recall and orientation, which is \textit{not} a robust measure of dementia. Proper clinical diagnosis is the gold standard, but we proceed with this definition given it is the only metric available. 
+
+\subsubsection{Risk Factor Selection}
+\label{sec:risk_selection}
+
+Not all variables in easySHARE are relevant dementia risk factors. We identified 21 potential variables covering known modifiable and unmodifiable risk factors. These contain information on education, smoking, drinking, depression, social contact, BMI, and physical activity, which were presented in \cite{livingston}. 
+
+We also selected age and sex, which are known unmodifiable risk factors \cite{age_sex}, along with income, which is a potential confounder \cite{alzheimer}. Lastly, we created a normalized per person income variable by dividing household income by household size. This left us with 22 potential risk factors. 
+
+Of these 22 variables, we identified 8 to drop. Education (numerical), doctor’s visits, hospital stays, number of diseases, and net household income were dropped because they shared information with other variables in the data (categorical education, self-perceived health, and normalized per person income). Number of siblings, number of children, and partner in household were dropped because they only had a moderate relationship with cognitive score.
+
+The final list of variables and their levels is shown in Table~\ref{tab:variables} (They have been discretized according to \ref{sec:disc_vars})
+\begin{center}
+\begin{table}[h!]
+  \includegraphics[width=\linewidth]{variables_and_levels.png}
+  \caption{\textbf{Table listing final variables, levels, and definitions for those that are unclear.}}
+  \label{tab:variables}
+\end{table}
+\end{center}
+\newpage
+
+\subsubsection{Discretizing Variables}
+\label{sec:disc_vars}
+
+The software used to learn the Bayesian networks (bnlearn \cite{bnlearn}) requires each variable to be either continuous or discrete for all associations to be considered. Since many of the risk factors are inherently discrete, we chose to discretize all data.
+
+Discretization is not trivial: the grouping strategy can inform the relationships found between variables. Further analysis of binning is required for more robust results, but this is not considered here. The chosen bins are described below. 
+
+\paragraph{Discretizing the Outcome Variable}\mbox{}\\
+\label{sec:disc_outcome}
+
+Cognitive score was split into three impairment categories: Severe, mild, and unimpaired. Severe was defined as those with cognitive scores 1.5 standard deviations below the mean. Mild was defined as those between 1.5 and 1 standard deviations below the mean. Unimpaired was anyone else. As such, severe was anything below 6.77, mild was anything between 6.77 and  8.72, and unimpaired was anything greater than or equal to 8.72.  
+
+The severe cutoff is reasonable given it requires cognitive score to be \textit{far} below the mean; however, the mild cutoff is somewhat arbitrary, which emphasizes the need for further binning analysis.
+
+\paragraph{Discretizing Risk Factors: Continuous Variables}\mbox{}\\
+\label{sec:disc_contin}
+
+Most age observations were between 50 and 95; we grouped these values into 5-year bins while values below 50 and above 95 were put into their own respective bins. Quality of life (casp) scores range from 12-48, so we split into bins of 4 to reduce categories. BMI was split into well-defined categories for underweight [0, 18.5), healthy [18.5, 25), overweight [25, 30), and obese [30, inf) \cite{bmi}.
+
+Most normalized household income observations were between -10,000 and 150,000 (net incomes can be negative), so we split these observations into bins of size 10,000. Those above 150,000 were binned together due to low observations. Household size and depression (eurod) only have small ranges, so we categorized each value as its own level.
+
+\paragraph{Discretizing Variables: Categorical Variables}\mbox{}\\
+\label{sec:disc_cat}
+
+For education, we grouped In School/Other together due to low observation counts; all other categories were kept in their original levels. The remaining categorical variables were kept in their original levels.
+
+\subsubsection{Missing Values}
+\label{sec:missing}
+
+For the outcome variable (cognitive score), there can be no missingness, so we simply dropped all observations with missing cognitive scores. For the remaining variables, easySHARE codes missingness according to type. Most types are non-informative and can be dropped, but there are three potentially informative types that should not be dropped: 1) Not Applicable Filtered, 2) Don't Know/Refused 3) and No Info.
+
+We identified 46,913 non-informative missing cases to drop. This left 93,212 observations. We then checked for informative missingness and found only “No Info” and “Don’t Know/Refused.” The proportion of the latter was low in the data, so we combined with “No Info” to create a single category.
+
+\subsubsection{Relationships between Risk Factors and Cognitive Impairment}
+\label{sec:exploratory}
+To confirm the selected variables have a relationship with cognitive impairment, we analyzed the conditional probability of the risk factors given impairment status. 
+
+\begin{figure} 
+  \begin{center}
+  \includegraphics[width=\linewidth]{age_exploratory_data.png}
+  \caption{\textbf{Probability of age given a specific impairment status.} The proportions in each impairment status will sum to one.}
+  \label{fig:exp_age}
+  \end{center}
+\end{figure}
+
+Figure~\ref{fig:exp_age} clearly shows the distribution of age depends on impairment status: If a person is severely impaired, they are more likely to be older than if they were unimpaired. This suggests a strong relationship between age and cognitive impairment, which is expected from the literature \cite{age_sex}. The missingness variable does not appear to have much impact here.
+
+\newpage
+
+\begin{figure} 
+\begin{center}
+  \includegraphics[width=\linewidth]{Casp_Exploratory_data.png}
+  \caption{\textbf{Probability of quality of life (CASP) given specific impairment status.} The proportions in each impairment status will sum to one.}
+  \label{fig:exp_casp}
+\end{center}
+\end{figure}
+
+Figure~\ref{fig:exp_casp} shows that the distribution of quality of life scores depends on impairment status. If a person is severely impaired, they are more likely to have low quality of life scores (particularly 12-24) than people in other impairment groups. Interestingly, the missingness variable appears to be indicative here. This information should improve modeling, which validates our choice to include missingness as a variable in the data.
+
+Similar exploratory analysis was performed for all variables, and most appear to be relevant. However, we cannot tell if the relationships are direct or due to confounding. Bayesian networks will allow us to understand the direction and degree of these relationship. We do not include the other data for brevity.
+
+\subsection{Models}
+\label{sec:models}
+
+\subsubsection{Bayesian Networks}
+\label{sec:bayes_network}
+
+Bayesian networks are graphical models that characterize the joint distribution of a set of random variables through a directed acyclic graph (DAG) \cite{scutari_review}. Figure~\ref{fig:ex_graphs} shows a cyclic vs an acyclic graph (both directed). These DAGs visualize the underlying conditional independence structure in the data through nodes and arcs \cite{scutari_review}. For instance, in Figure~\ref{subcap:DAG}, nodes A, B, C, D, and E are random variables and the arcs connecting them define the dependence relationships. 
+
+\begin{figure} 
+\begin{center}
+  \begin{subfigure}{0.45\textwidth}
+    \includegraphics[width=\linewidth]{cyclic_graph_example.png}
+    \caption{}
+    \label{subcap:cyclic}
+  \end{subfigure}%
+  \begin{subfigure}{0.45\textwidth}
+    \includegraphics[width=\linewidth]{DAG_example.png}
+    \caption{}
+    \label{subcap:DAG}
+  \end{subfigure}%
+\end{center}
+  \caption{\textbf{Example of a directed cyclic graph (A) and a directed acyclic graph (B)}.}
+  \label{fig:ex_graphs}
+\end{figure}
+
+\newpage
+The structure of these DAGs induces a factorization \cite{scutari_review} of the global joint distribution into local distributions such that:
+
+\begin{equation}\label{eqn:bayes_factorization}
+P(\textbf{X}|\mathcal{G}, \Theta) = \prod_{i=1}^N P(\textbf{X}_{i}|\Pi_{\textbf{X}_{i}}, \Theta_{\textbf{X}_{i}})
+\end{equation}
+
+Where $\mathcal{G}$ is the graph, $\textbf{X}$ is the set of random variables (with parameters $\Theta$), and $\Pi_{\textbf{X}}$ are the parents of each node in \textbf{X}. As such, the global joint distribution of \textbf{X} decomposes into a local distribution for each $\textbf{X}_{i}$ (with parameters $\Theta_{\textbf{X}_{i}}$) conditional on its parents, $\Pi_{\textbf{X}_{i}}$ \cite{scutari_review}. This factorization implies that each random variable, conditioned on its parents, is independent of its non-direct descendants \cite{ruozzi}. In other words, graphical separation implies independence. In our data, the nodes include the risk factors and outcome variable. For more details on Bayesian networks please see \cite{scutari_review} and \cite{ruozzi}. 
+
+Note that our data prevents causal inference, particularly because it may not meet assumptions of acyclicity (physical health may affect depression which may affect physical health, etc.). As such, we are limited to inference on direct and indirect dependence.
+
+\subsubsection{Structure Learning}
+\label{sec:structure_learn}
+
+The first step to learning a Bayesian network is learning it’s graphical structure. Many algorithms are available for structure learning. There are constraint-based algorithms that focus on conditional independence tests, score-based algorithms that explore relationships by minimizing a score, and many others. 
+
+Score-based algorithms are faster than constraint-based algorithms \cite{scutari_methods}, but they find the optimal DAG by considering the relationship between \textit{all} the variables. While important, we primarily care about relationships leading to cognitive impairment. As such, we designed a hybrid structure-learning approach. First, we use a score-based method (hill climb with Bayesian Information Criteria) to learn a base-DAG structure. Then we learn a set of potentially improved DAGs using conditional independence tests between each variable in the network and cognitive impairment. The conditional independence tests should identify relationships with impairment that might not be detected in score-based methods alone. 
+
+Structure learning algorithms are stochastic, so they are subject to random error. To reduce the chance of identifying a non-representative base-DAG, we bootstrapped the learning process 400 times and selected arcs present over 85\% of the time. The direction of the arc was chosen as the direction present in over 50\% of the bootstraps. Note that we employed a blacklist to prevent output arcs from cognitive score and input arcs to age and education. The first is because we only care about inputs to cognitive impairment and the second is because we assume demographics are not influenced by other variables.
+
+The conditional independence testing procedure is best described with an example. Say age and education are identified as parent nodes of cognitive impairment in the base-DAG. We would then condition on age and education and test conditional independence between cognitive impairment and the remaining variables. For those found significant, we randomly select one to add as an arc, condition on this variable as a parent (along with the previous parents), and repeat this procedure until no other variables are significant. The resulting DAG is then included as a potential network. This procedure is stochastic due to the random arc selection.
+
+To explore the space of potential arcs, we repeated this stochastic procedure 400 times. Any DAGs that introduced cyclicity were discarded. From all DAGs identified, we tested for equivalence and reported only the unique DAGs.  
+
+\subsubsection{Model Fitting}
+\label{sec:model_fit}
+
+The second step to learning a Bayesian network is to learn the local distributions (conditional probabilities for a node). This is done using the bn.fit function in the bnlearn R package \cite{bnlearn}. We used the classical Bayesian posterior method with a uniform prior to estimate the conditional probability of an event.
+
+We fit each DAG to the data to get a set of Bayesian networks and selected the best ones with the validation strategy described below.
+
+\subsubsection{Model Validation Strategy}
+\label{sec:model_val}
+
+We use a multi-class prediction strategy to validate our results. However, prediction is not the goal of this study; it is simply a method for comparison.
+
+The validation strategy is two-fold. First, we train the model in a dataset containing multiple countries (randomly selected) and then predict on a test set that contains the same countries. This will allow us to find the most representative network for our selected countries without overfitting. We use an 80-20 split to create the train and test sets. 
+
+To determine whether the learned models are generalizable, we predict on an external validation set with countries different from those used for training and assess the results. This geographic external validation strategy tests for generalization since it evaluates on data generated under different cultural and systemic structures \cite{external_val}. We randomly selected 65\% of the countries to be used in the train-test validation described above, and the remaining 35\% were left for external validation. The countries and sample sizes for each data set are shown in Supplementary Table~\ref{supp:countries}. 
+
+\subsection{Handling Data Imbalances}
+\label{sec:data_imbalance}
+
+Our dataset is highly unbalanced for cognitive impairment; there are significantly more unimpaired cases than either mild or severe impairment.
+
+The imbalance in our data is problematic for two reasons. First, imbalanced data can lead to poor classification results since the classifier often predicts the majority class to increase accuracy. Since prediction is our validation strategy, imbalances could bias the results. Second, Bayesian networks rely on conditional probabilities to learn their networks, so low case counts for a category will yield conditional probabilities close to zero. This makes identifying relationships difficult. As such, imbalanced data could prevent detection of important relationships with severe and mild impairment.
+
+We take two approaches to counteract this problem. First, we oversample the minority classes (mild and severe) to generate a balanced dataset. Second, we define a classification score combining sensitivity for the mild and severe classes with specificity for the unimpaired class.
+
+Oversampling is a simple strategy known to improve classification in unbalanced classification problems \cite{oversampling}. Oversampling amplifies signals in the minority class, which enables detection of relationships that may not be detected otherwise. However, oversampling may also amplify random signals. Fortunately, our internal validation strategy should let us select networks that minimize random signal detection. The oversampled training set contains 134,520 observations. 
+
+Note that we learned DAG structures using both the original and oversampled data. The oversampled data consistently outperformed the original data (Supplementary Tables \ref{supp:orig_table_int} and \ref{supp:oversampled_table_int}), so all remaining analyses consider only the oversampled data.
+
+We defined a classification score by combining sensitivity from the minority classes (severe and mild) with specificity of the majority class (unimpaired). The best performing model has the highest score. This scoring system emphasizes reduction of false negatives in the minority classes and false positives in the majority class. It also emphasizes learning relationships related to impairment rather than unimpairment, which may allow the structure learning algorithms to identify more potential risk factors than otherwise. 
+```
+```{=latex}
+\section{Results}
+\label{sec:results}
+
+\subsection{Model Selection}
+\label{sec:model_selection}
+
+We performed the hybrid structure-learning approach defined earlier on the oversampled training dataset and identified 47 potential DAGs including the base-DAG. We fit each of these models to the oversampled training set and tested prediction on the internal validation set (n = 10568). We extracted sensitivity, specificity, and balanced recall for each class and calculated the combined classification score. We then ranked each model according to highest combined score. 
+
+Table~\ref{tab:internal-val-sel} shows the internal validation results for the base-DAG, the two best internally validated models, and the best externally validated model.
+
+\vspace{2mm}
+\begin{table}[h!]
+  \begin{center}
+  \includegraphics[width=\linewidth]{Oversampled_Internal_Validation.png}
+  \caption{\textbf{Internal validation results for selected models trained on oversampled data.} The combined score is calculated by adding sensitivity for severe and mild to specificity for unimpaired.}
+  \label{tab:internal-val-sel}
+  \end{center}
+\end{table}
+
+Table~\ref{tab:internal-val-sel} shows that models trained on oversampled data detect severe and mild classes quite well under internal validation. Sensitivity for DAG 39 is 0.750 and 0.669 for severe and mild cases, respectively. Specificity is 0.885 for unimpaired cases. Additionally, balanced accuracy is above 0.730 for each class. DAG 32 is only slightly worse, so the networks are nearly equivalent. The base-DAG, however, performed the worst of the 47 models in the internal validation set, which confirms that the use of conditional independence testing improved our results.
+
+Next we tested prediction on the external validation set (n = 27379) to assess the generalizability of the models we learned. Table~\ref{tab:external-val-sel} shows the external validation results for selected models. For full internal and external validation results see Supplementary Tables \ref{supp:oversampled_table_int} and \ref{supp:oversampled_table_ext}, respectively.
+
+\vspace{4mm}
+\begin{table}[h]
+  \begin{center}
+    \includegraphics[width=\linewidth]{Oversampled_External_Validation.png}
+    \caption{\textbf{External validation results for selected models trained on
+    oversampled data. External dataset contained 7 countries.}}
+    \label{tab:external-val-sel}
+  \end{center}
+\end{table}
+
+Table~\ref{tab:external-val-sel} shows that DAGs 39 and 32 were ranked 47 and 42 in external validation, respectively, suggesting that these models are not generalizable outside the countries present in the training data. However, given the best external score (DAG 31: 1.669) is approximately the same as the worst internal score (base-DAG: 1.656), it is fair to say none of the models generalize particularly well. This is especially true since the range in external validation scores is only 0.248 while the range in the internal validation scores is 0.649. This makes sense considering countries and regions have unique cultural systems that may influence the interactions of our variables.  
+
+Consequently, our conclusions only apply to the countries in the internal data set. As such, we will only perform and in-depth analysis on DAG 39 and DAG 32. These are our selected models.
+
+\subsection{Direct Risk Factors for Cognitive Impairment}
+\label{sec:direct_factors}
+
+Our original goal was to use a Bayesian network to learn the dependence structure of our data, which would enable us to understand the direct and indirect relationships between potential risk factors and cognitive impairment. Figure~\ref{fig:models} shows the most representative models (DAGs 39 and 32) we could find (See supplementary Figure~\ref{supp:dag_31} for DAG 31). The base-DAG is included as a reference.
+
+All of the DAGs in Figure~\ref{fig:models} are similar. Each of them identifies age, education, and sex as direct links to cognitive impairment because they were present in the base-DAG. The only differences are: 1) DAG 39 and 32 both add a direct relationship between depression and cognitive impairment, 2) DAG 39 adds a direct relationship between quality of life and cognitive impairment, and 3) DAG 32 adds a direct relationship between drinking and cognitive impairment.
+
+Depression is clearly an important risk factor since it appears in both DAG 39 and 32. However, quality of life and drinking seem to play a similar role in their respective models. In fact, the conditional independence test results indicate that if quality of life is used as a risk factor, drinking loses its significance and vice versa. As such, they provide the same information, but quality of life is slightly better since its validation score is slightly higher. This makes sense since drinking levels and perceived quality of life are likely correlated.
+
+\begin{figure}[!h] 
+  \begin{center}
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{base_DAG.png}
+    \caption{base-DAG}
+    \label{subcap:base_dag}
+  \end{subfigure}%
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag_39.png}
+    \caption{DAG 39}
+    \label{subcap:dag_39}
+  \end{subfigure}
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag_32.png}
+    \caption{DAG 32}
+    \label{subcap:dag_32}
+  \end{subfigure}%
+  \end{center}
+  \caption{\textbf{Baseline and selected Bayesian network models used to describe the probability dependence relationship between risk factors and cognitive impairment.} A) base-DAG, B) DAG 39, and C) DAG 32. Red lines emphasize differences from the base-DAG.}
+  \label{fig:models}
+\end{figure}
+
+\newpage
+
+Overall the results strongly indicate that the probability of cognitive impairment is directly dependent on age, education, sex, depression, and quality of life/drinking. To understand the direction of these relationships, we queried DAGs 39 and 32 to find the conditional probability of cognitive impairment given direct risk factors. These are not necessarily causal relations; we can only claim probabilistic dependence. Nonetheless, the relationships can guide future causal studies to test if these risk factors (particularly the modifiable ones) are targets for intervention.
+
+Note that we only show the results for DAG 39 because the trends held for both DAGs with only minor changes in probability (except drinking; we show DAG 32 for drinking because the relationship was not in DAG 39).
+
+\begin{figure}[h!] 
+\begin{center}
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag_39_age_query.png}
+    \caption{}
+    \label{subcap:age}
+  \end{subfigure}%
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag_39_sex_query.png}
+    \caption{}
+    \label{subcap:sex}
+  \end{subfigure}
+\end{center}
+  \caption{\textbf{Conditional probability of impairment status given A) age and B) sex.} Results queried from DAG 39.}
+  \label{fig:age_sex}
+\end{figure}
+\newpage
+
+Figure~\ref{subcap:age} emphasizes that the probability of impairment increases with age as expected from literature \cite{age_sex}. Figure~\ref{subcap:sex} shows that males are more likely to be impaired than females (although it's potentially not significant), which agrees with literature on vascular dementias but not Alzheimer’s disease \cite{age_sex}. 
+
+Age and sex are unmodifiable risk factors (sex is modifiable but not in a risk factor context), so there are no potential intervention targets here. However, it is worth noting that biological confounders (not in the data) may be the source of these relationships; if this were the case, the confounders themselves may be modifiable. 
+
+The remaining risk factors are modifiable, so they are potential targets for intervention. 
+
+\begin{figure}[h!] 
+\begin{center}
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag39_education_query.png}
+    \caption{}
+    \label{subcap:education}
+  \end{subfigure}%
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag39_quality_of_life_query.png}
+    \caption{}
+    \label{subcap:casp}
+  \end{subfigure}
+\end{center}
+\vspace{-6mm}
+  \caption{\textbf{Conditional probability of impairment status given A) education and B) quality of life}. Both education and casp increase from left to right. Results queried from DAG 39.}
+  \label{fig:edu_casp}
+\end{figure}
+
+\begin{figure}[h!] 
+\begin{center}
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag39_depression_query.png}
+    \caption{Depression}
+    \label{subcap:depression}
+  \end{subfigure}%
+  \begin{subfigure}{0.47\textwidth}
+    \includegraphics[width=\linewidth]{dag32_drinking_query.png}
+    \caption{Drinking}
+    \label{subcap:drinking}
+  \end{subfigure}
+\end{center}
+  \caption{\textbf{Conditional probability of impairment status given A) depression and B) drinking}. Both depression and drinking levels increase from left to right. Depression results queried from DAG 39 and drinking results from DAG 32.}
+  \label{fig:depr_drink}
+  \vspace{-2mm}
+\end{figure}
+
+Figure~\ref{fig:edu_casp} emphasizes that the probability of impairment generally decreases with high education (Figure~\ref{subcap:education}) and high quality of life scores (Figure~\ref{subcap:casp}). Figure~\ref{subcap:depression}, shows that the probability of mild impairment increases with high depression while severe impairment does not appear affected. Probability of impairment also appears to increase with high levels of drinking and no drinking (Figure~\ref{subcap:drinking}). However, the effect of no drinking is likely confounded by either a history of drinking or health reasons.
+
+The data shows that improving education, reducing drinking, combatting depression, and improving overall quality of life can reduce the probability of impairment. However, more rigorous studies are required for causal inference. Nonetheless, these networks offer useful targets for future study.
+
+\vspace{-0mm}
+\subsection{Indirect Risk Factors for Cognitive Impairment}
+\label{sec:indirect_factors}
+
+Referring again to Figure~\ref{fig:models}, each of the variables in our study (except BMI) eventually flows into cognitive impairment. While they are not directly related, they affect the probability of direct links to cognitive impairment, so they still have an impact. As such, they are also potential targets for future studies and intervention.
+    
+For instance, Figure~\ref{subcap:depression} showed that the probability of (mild) impairment decreases with lower depression scores. Since self-perceived health (sphus) is a direct link to depression, levels of perceived health associated with lower depression should be indirectly associated with lower impairment. Figure~\ref{fig:depr_sphus} shows the conditional probability of low, mild, and high depression scores given health.
+\newpage
+
+\begin{figure}[h!]
+  \begin{center}
+    \includegraphics[width=0.7\linewidth]{dag39_depression_through_sphus_query.png}
+    \caption{\textbf{Conditional probability of depression given self-perceived health (SPHUS).} Results queried from DAG 39 on each individual level in depression and then marginalized over levels in each group.}
+    \label{fig:depr_sphus}
+  \end{center}
+  \vspace{-4mm}
+\end{figure}
+
+The results suggest that the probability of low depression increases as perceived health increases. As such, intervention strategies to increase perceived health could potentially (indirectly) reduce the probability of impairment. The same type of analysis can be performed with each of the remaining pathways in the Bayesian networks, but these analyses are left as future directions.
+```
+```{=latex}
+\vspace{-2mm}
+\section{Conclusion and Discussion}
+\label{sec:conclusion}
+
+Overall, we designed a hybrid structure-learning approach that performed better than score-based methods alone when testing on a population similar to the training population. We learned two very similar Bayesian networks (DAGs 39 and 32; Figure~\ref{fig:models}) with this approach that identified age, sex, education, depression, and quality of life/drinking as direct risk factors (not necessarily causal) for cognitive impairment. Additionally, we identified interaction pathways for each risk factor in our data (except BMI) that lead to cognitive impairment. Lastly, through an analysis of perceived health (sphus) and depression, we showed that indirect risk factors are potential intervention targets to reduce the probability of impairment. 
+
+This type of pathway analysis is critical for future causal and intervention studies. However, for the scope of this report, we did not assess every interaction in the network. For now, the Bayesian networks we provide offer especially useful targets for future study.
+\newpage
+
+\subsection{Limitations and Future Directions}
+\label{sec:limitations}
+
+While this analysis provides novel information for further analysis, there are important limitations. First, and most critical, we use cognitive impairment (based on recall and orientation alone) as a proxy for dementia. This does not fully capture the symptoms of dementia, so our conclusions only apply to recall and orientation-based cognitive impairment. Future studies should emphasize data that contains a dementia label.
+
+Similarly, the bins used to define both cognitive impairment and our risk factors play a role in the interactions found, so the conclusions only apply to our specific definitions of cognitive impairment and risk factors. Future analysis is required to understand the impact of grouping strategy.
+
+Lastly, the study population is non-incarcerated people of relatively good health (not hospitalized) who live in the 13 countries included in the training data. As the external validation results suggest, we cannot generalize to countries outside of those in our data. Future studies should focus on individual countries or regions to identify region specific risk factors.
+
+There are potentially more limitations due to missing data, data entry errors, etc. However, the original data covers 16 years and 29 countries, so there are bound to be issues. All considering, our analysis provides incredibly valuable targets for future studies. We simply note the limitations to emphasize the need for continued analysis.
+```
+\clearpage
+
+```{=latex}
+%%References
+\bibliography{Dementia_Dissertation_Ref}
+```
+\clearpage
+
+```{=latex}
+\appendix
+\section*{Supplementary Tables and Figures}
+
+
+\begin{center}
+\begin{table}[h!]
+  \includegraphics[width=\linewidth]{country_table.png}
+    \caption{\textbf{Internal and external dataset composition. The internal sets were randomly subsetted, so individual country composition may randomly differ from what is presented here.}}
+    \label{supp:countries}
+\end{table}
+\end{center}
+
+\begin{center}
+\begin{table}[h!]
+  \includegraphics[width=\linewidth]{Original_Internal_Val_Full.png}
+    \caption{\textbf{Full internal validation results for models trained on original (not-oversampled) data.}}
+    \label{supp:orig_table_int}
+\end{table}
+\end{center}
+
+\begin{center}
+\begin{table}[h!] 
+  \includegraphics[width=\linewidth]{Oversampled_Internal_Val_Full.png}
+    \caption{\textbf{Full internal validation results for models trained on oversampled data.}}
+    \label{supp:oversampled_table_int}
+\end{table}
+\end{center}
+
+\begin{center}
+\begin{table}[h!] 
+  \includegraphics[width=\linewidth]{Oversampled_External_Val_Full.png}
+    \caption{\textbf{Full external validation results for models trained on oversampled data.}}
+    \label{supp:oversampled_table_ext}
+\end{table}
+\end{center}
+
+\begin{figure}[h!]
+  \begin{center}
+    \begin{subfigure}{0.8\textwidth}
+      \includegraphics[width=\linewidth]{dag_31.png}
+      \caption{DAG 31}
+    \end{subfigure}
+    \caption{\textbf{Most generalizable DAG from all models learned.} DAG 31}
+    \label{supp:dag_31}
+  \end{center}
+\end{figure}
+```
